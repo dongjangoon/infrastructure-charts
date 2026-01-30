@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config
+  namespace: logging
+data:
+  cluster_name: "dev-cluster"
+  opensearch_host: "${OPENSEARCH_IP}"  # 로컬 OpenSearch IP로 변경

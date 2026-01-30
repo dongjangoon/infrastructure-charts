@@ -1,0 +1,58 @@
+persistence:
+  enabled: true
+  storageClassName: local-path
+  accessModes: ["ReadWriteOnce"]
+  size: 7Gi
+
+tempo:
+  image:
+    repository: grafana/tempo
+    tag: "2.7.1"
+    pullPolicy: IfNotPresent
+
+  server:
+    http_listen_port: 3200
+
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+metrics_generator:
+  enabled: true
+  registry:
+    collection_interval: 5s
+  storage:
+    path: /tmp/tempo/generator/wal
+    remote_write:
+      - url: "http://kube-prometheus-stack-prometheus.monitoring:9090/api/v1/write"
+        send_exemplars: true
+  processor:
+    service_graphs:
+      enabled: true
+
+service:
+  type: ClusterIP
+
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  interval: 30s

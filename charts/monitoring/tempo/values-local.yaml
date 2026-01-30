@@ -1,0 +1,133 @@
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+persistence:
+  enabled: true
+  storageClassName: hostpath
+  accessModes: ["ReadWriteOnce"]
+  size: 7Gi
+
+tempo:
+  image:
+    repository: grafana/tempo
+    tag: "2.7.1"
+    pullPolicy: IfNotPresent
+
+  server:
+    http_listen_port: 3100
+
+  livenessProbe:
+    httpGet:
+      path: /ready
+      port: 3100
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 3100
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      # # 블록 설정 추가 (성능 최적화)
+      # block:
+      #   bloom_filter_false_positive: 0.05
+      #   index_downsample_bytes: 1000
+      #   encoding: gzip
+      # # WAL 설정 추가
+      # wal:
+      #   path: /var/tempo/wal
+      #   encoding: gzip
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 2Gi
+
+service:
+  type: ClusterIP
+  ports:
+    - name: tempo-prom-metrics
+      port: 3100
+      targetPort: 3100
+    - name: tempo-jaeger-thrift-http
+      port: 14268
+      targetPort: 14268
+    - name: tempo-jaeger-grpc
+      port: 14250
+      targetPort: 14250
+    - name: tempo-otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: tempo-otlp-http
+      port: 4318
+      targetPort: 4318
+    - name: tempo-grpc
+      port: 9095
+      targetPort: 9095
+
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  interval: 30s
+  labels:
+    release: kube-prometheus-stack
+  path: /metrics
+  port: tempo-prom-metrics
+
+metrics_generator:
+  enabled: true
+  registry:
+    collection_interval: 5s
+    # 외부 라벨 추가 (클러스터 식별용)
+    external_labels:
+      cluster: "k8s-cluster"
+      environment: "development"
+
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: "http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/write"
+        send_exemplars: true
+        # 큐 설정 (성능 최적화)
+        queue_config:
+          capacity: 10000
+          max_shards: 200
+          min_shards: 1
+          max_samples_per_send: 1000
+          batch_send_deadline: 5s
+
+
+  processor:
+    service_graphs:
+      enabled: true
+      # 차원 설정 (그래프에 포함할 속성들)
+      dimensions:
+        - "service.name"
+        - "service.namespace"
+        - "service.version"
+        - "deployment.environment"
+      # 최대 아이템 수 제한 (메모리 사용량 제어)
+      max_items: 10000
+      # TTL 설정 (오래된 서비스 정보 정리)
+      ttl: 24h

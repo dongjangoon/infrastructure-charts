@@ -1,0 +1,40 @@
+prometheus:
+  prometheusSpec:
+    replicas: 2
+    externalLabels:
+      cluster: "production"
+      region: "ap-northeast-2"
+    thanos:
+      version: v0.38.0
+      objectStorageConfig:
+        name: thanos-objstore-config
+        key: objstore.yml
+    retention: 15d
+    retentionSize: 8GB
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 1
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                - prometheus
+            topologyKey: kubernetes.io/hostname

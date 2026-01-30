@@ -1,0 +1,24 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: cpu-memory-scaler
+  labels:
+    app: cpu-memory-scaler
+spec:
+  scaleTargetRef:
+    name: example-app  # 실제 deployment 이름으로 변경 필요
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+      metricName: cpu_usage_rate
+      threshold: '70'
+      query: sum(rate(container_cpu_usage_seconds_total{pod=~"example-app-.*"}[2m])) by (pod) * 100
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+      metricName: memory_usage_rate
+      threshold: '80'
+      query: sum(container_memory_working_set_bytes{pod=~"example-app-.*"}) / sum(container_spec_memory_limit_bytes{pod=~"example-app-.*"}) * 100

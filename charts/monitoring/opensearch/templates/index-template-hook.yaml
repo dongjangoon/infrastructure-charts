@@ -1,0 +1,70 @@
+{{- if .Values.indexTemplate.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opensearch.uname" . }}-index-template
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  setup-template.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Waiting for OpenSearch cluster to be ready..."
+    for i in {1..60}; do
+      if curl -s -f "http://{{ include "opensearch.masterService" . }}:{{ .Values.httpPort }}/_cluster/health" > /dev/null; then
+        echo "OpenSearch is ready!"
+        break
+      fi
+      echo "Attempt $i: OpenSearch not ready, waiting 10 seconds..."
+      sleep 10
+    done
+    
+    echo "Creating index template..."
+    curl -X PUT "http://{{ include "opensearch.masterService" . }}:{{ .Values.httpPort }}/_index_template/{{ .Values.indexTemplate.name | default "logs-template" }}" \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "index_patterns": {{ .Values.indexTemplate.patterns | toJson }},
+        "template": {
+          "settings": {
+            "number_of_shards": {{ .Values.indexTemplate.shards | default 3 }},
+            "number_of_replicas": {{ .Values.indexTemplate.replicas | default 1 }},
+            "index.refresh_interval": "{{ .Values.indexTemplate.refreshInterval | default "5s" }}",
+            "index.codec": "{{ .Values.indexTemplate.codec | default "best_compression" }}"
+          }
+        },
+        "priority": {{ .Values.indexTemplate.priority | default 100 }}
+      }'
+    
+    echo "Index template created successfully!"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "opensearch.uname" . }}-template-setup
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: template-setup
+        image: curlimages/curl:8.1.2
+        command: ["/bin/sh"]
+        args: ["/scripts/setup-template.sh"]
+        volumeMounts:
+        - name: setup-script
+          mountPath: /scripts
+      volumes:
+      - name: setup-script
+        configMap:
+          name: {{ include "opensearch.uname" . }}-index-template
+          defaultMode: 0755
+{{- end }}

@@ -1,0 +1,183 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-memory-intensive-script
+  namespace: default
+data:
+  memory-intensive-test.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+    import { Rate } from 'k6/metrics';
+
+    export let errorRate = new Rate('errors');
+
+    // 메모리 집약적 테스트 - 메모리 HPA 스케일링 유발
+    export let options = {
+      stages: [
+        // 워밍업: 1분 동안 0 -> 30 사용자
+        { duration: '1m', target: 30 },
+        // 1단계: 3분 동안 30 -> 80 사용자 (메모리 40-60%)
+        { duration: '3m', target: 80 },
+        // 2단계: 5분 동안 80 -> 150 사용자 (메모리 60-80%, HPA 트리거)
+        { duration: '5m', target: 150 },
+        // 3단계: 3분 동안 150 -> 250 사용자 (메모리 스트레스)
+        { duration: '3m', target: 250 },
+        // 고부하 유지: 10분 동안 250 사용자
+        { duration: '10m', target: 250 },
+        // 점진적 감소: 5분 동안 250 -> 50 사용자
+        { duration: '5m', target: 50 },
+        // 쿨다운: 3분 동안 50 -> 0 사용자
+        { duration: '3m', target: 0 },
+      ],
+      thresholds: {
+        http_req_duration: ['p(95)<5000'],
+        errors: ['rate<0.15'],
+        http_reqs: ['rate>20'],
+      },
+    };
+
+    const BASE_URL = 'http://test-app-service.default.svc.cluster.local';
+
+    // 메모리 사용량을 늘리기 위한 큰 데이터 생성
+    let largeDataArray = [];
+    let sessionStorage = new Map();
+
+    export default function () {
+      // 큰 응답 데이터를 요청하여 메모리 사용량 증가
+      let response = http.get(`${BASE_URL}/`, {
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'User-Agent': 'Mozilla/5.0 (compatible; k6-memory-test)',
+        }
+      });
+
+      // 응답 데이터를 메모리에 축적 (메모리 리크 시뮬레이션)
+      if (response.body) {
+        largeDataArray.push({
+          timestamp: Date.now(),
+          responseBody: response.body,
+          headers: JSON.stringify(response.headers),
+          metrics: {
+            duration: response.timings.duration,
+            size: response.body.length
+          }
+        });
+
+        // 세션 데이터 시뮬레이션 (사용자별 메모리 사용)
+        let userId = `user_${__VU}_${__ITER}`;
+        sessionStorage.set(userId, {
+          requests: (sessionStorage.get(userId)?.requests || 0) + 1,
+          data: response.body.substring(0, 1000), // 1KB 정도 저장
+          history: largeDataArray.slice(-10) // 최근 10개 요청 기록
+        });
+      }
+
+      let result = check(response, {
+        'status is 200': (r) => r.status === 200,
+        'response size > 0': (r) => r.body && r.body.length > 0,
+        'memory data stored': () => largeDataArray.length > 0,
+      });
+
+      errorRate.add(!result);
+
+      // 여러 동시 요청으로 메모리 사용량 추가 증가
+      let requests = [];
+      for (let i = 0; i < 5; i++) {
+        requests.push(http.get(`${BASE_URL}/heavy-data-${i}`, {
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        }));
+      }
+
+      // 각 응답을 메모리에 저장
+      requests.forEach((req, index) => {
+        if (req.body) {
+          largeDataArray.push({
+            requestId: `batch_${index}_${__VU}_${__ITER}`,
+            data: req.body,
+            timestamp: Date.now()
+          });
+        }
+      });
+
+      // 큰 JSON 객체 생성 (추가 메모리 사용)
+      let memoryHog = {
+        timestamp: Date.now(),
+        virtualUser: __VU,
+        iteration: __ITER,
+        largeArray: new Array(1000).fill(0).map((_, i) => ({
+          id: i,
+          data: `memory_consuming_data_${i}_${Math.random()}`,
+          nested: {
+            level1: new Array(50).fill('data'),
+            level2: new Array(50).fill('more_data')
+          }
+        })),
+        sessionInfo: Object.fromEntries(sessionStorage)
+      };
+
+      // 메모리 정리 (가끔씩만 실행하여 메모리 압박 유지)
+      if (__ITER % 50 === 0) {
+        largeDataArray = largeDataArray.slice(-100); // 최근 100개만 유지
+        // 세션 데이터 일부 정리
+        if (sessionStorage.size > 1000) {
+          let keysToDelete = Array.from(sessionStorage.keys()).slice(0, 200);
+          keysToDelete.forEach(key => sessionStorage.delete(key));
+        }
+      }
+
+      // 짧은 대기 시간 (메모리 압박 지속)
+      sleep(Math.random() * 1 + 0.5);
+    }
+
+    export function handleSummary(data) {
+      return {
+        'memory-intensive-test-summary.json': JSON.stringify(data),
+        stdout: `
+    === k6 메모리 집약적 테스트 결과 ===
+    🧠 최대 동시 사용자: 250명 (메모리 중심)
+    📊 총 요청 수: ${data.metrics.http_reqs.count}
+    ⏱️  평균 응답 시간: ${data.metrics.http_req_duration.avg.toFixed(2)}ms
+    📈 95 퍼센타일: ${data.metrics['http_req_duration{percentile:95}'].value.toFixed(2)}ms
+    ❌ 에러율: ${(data.metrics.errors.rate * 100).toFixed(2)}%
+    🚀 초당 평균 요청: ${data.metrics.http_reqs.rate.toFixed(2)}
+
+    === 메모리 HPA 모니터링 ===
+    kubectl get hpa test-app-hpa -w
+    kubectl top pods -l app=test-app --containers
+    kubectl describe pods -l app=test-app | grep -A 5 -B 5 memory
+        `,
+      };
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-memory-intensive-test
+  namespace: default
+spec:
+  template:
+    spec:
+      containers:
+      - name: k6
+        image: grafana/k6:latest
+        command: ["k6", "run", "/scripts/memory-intensive-test.js"]
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        volumeMounts:
+        - name: k6-script-volume
+          mountPath: /scripts
+      volumes:
+      - name: k6-script-volume
+        configMap:
+          name: k6-memory-intensive-script
+      restartPolicy: Never
+  backoffLimit: 1

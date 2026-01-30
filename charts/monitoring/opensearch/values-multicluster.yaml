@@ -1,0 +1,122 @@
+---
+clusterName: "opensearch-cluster"
+nodeGroup: "master"
+
+# 테스트 환경 - 싱글노드로 경량화
+singleNode: true
+masterService: "opensearch-cluster-master"
+
+roles:
+  - master
+  - ingest
+  - data
+  - remote_cluster_client
+
+replicas: 1
+
+config:
+  opensearch.yml: |
+    cluster.name: opensearch-cluster
+    network.host: 0.0.0.0
+    discovery.type: single-node
+    plugins.security.disabled: true
+    
+    # 멀티 클러스터 로깅을 위한 인덱스 템플릿 자동 생성
+    action.auto_create_index: "+*"
+    
+    # 테스트 환경을 위한 성능 최적화
+    indices.memory.index_buffer_size: 20%
+    indices.queries.cache.size: 5%
+
+# 테스트 환경 경량화 - 리소스 요구사항 축소
+opensearchJavaOpts: "-Xmx256M -Xms256M"
+
+resources:
+  requests:
+    cpu: "200m"
+    memory: "512Mi"
+  limits:
+    cpu: "500m"
+    memory: "1Gi"
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+service:
+  type: NodePort
+  nodePort: "30920"
+
+# 테스트 환경 - anti-affinity 완화
+antiAffinity: "soft"
+
+tolerations:
+  - key: "gpu"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+# 멀티 클러스터 로깅을 위한 인덱스 라이프사이클 설정
+lifecycle:
+  postStart:
+    exec:
+      command:
+        - bash
+        - -c
+        - |
+          #!/bin/bash
+          # OpenSearch 시작 대기
+          ES_URL=http://localhost:9200
+          while [[ "$(curl -s -o /dev/null -w '%{http_code}\n' $ES_URL)" != "200" ]]; do sleep 3; done
+          
+          # 애플리케이션 로그 인덱스 템플릿 (일별: cluster-name-YYYY.MM.DD)
+          curl -XPUT "$ES_URL/_index_template/app-logs-template" -H 'Content-Type: application/json' -d'{
+            "index_patterns": ["*-[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]"],
+            "template": {
+              "settings": {
+                "number_of_shards": 1,
+                "number_of_replicas": 0,
+                "index.refresh_interval": "10s",
+                "index.lifecycle.name": "daily-logs-policy",
+                "index.lifecycle.rollover_alias": "logs-alias"
+              },
+              "mappings": {
+                "properties": {
+                  "@timestamp": {"type": "date"},
+                  "cluster_name": {"type": "keyword"},
+                  "namespace": {"type": "keyword"},
+                  "pod_name": {"type": "keyword"},
+                  "container_name": {"type": "keyword"},
+                  "log_level": {"type": "keyword"},
+                  "environment": {"type": "keyword"},
+                  "message": {"type": "text", "analyzer": "standard"}
+                }
+              }
+            }
+          }'
+          
+          # 인프라 로그 인덱스 템플릿 (일별: cluster-name-infra-YYYY.MM.DD)
+          curl -XPUT "$ES_URL/_index_template/infra-logs-template" -H 'Content-Type: application/json' -d'{
+            "index_patterns": ["*-infra-[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]"],
+            "template": {
+              "settings": {
+                "number_of_shards": 1,
+                "number_of_replicas": 0,
+                "index.refresh_interval": "30s"
+              },
+              "mappings": {
+                "properties": {
+                  "@timestamp": {"type": "date"},
+                  "cluster_name": {"type": "keyword"},
+                  "namespace": {"type": "keyword"},
+                  "pod_name": {"type": "keyword"},
+                  "message": {"type": "text"}
+                }
+              }
+            }
+          }'
+
+# ServiceMonitor 활성화 (모니터링용)
+serviceMonitor:
+  enabled: true
+  interval: 30s

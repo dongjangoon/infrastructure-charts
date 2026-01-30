@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+resources:
+- ../../base
+- prometheus-nodeport.yaml
+
+labels:
+- includeSelectors: true
+  pairs:
+    environment: cluster2
+    cluster: k3d-cluster2
+
+patches:
+- path: prometheus-server-patch.yaml
+- path: grafana-patch.yaml
+
+images:
+- name: prom/prometheus
+  newTag: v3.1.0
+- name: prom/node-exporter
+  newTag: v1.8.2
+- name: registry.k8s.io/kube-state-metrics/kube-state-metrics
+  newTag: v2.14.0
+- name: prom/pushgateway
+  newTag: v1.11.0
+- name: grafana/grafana
+  newTag: 11.5.1

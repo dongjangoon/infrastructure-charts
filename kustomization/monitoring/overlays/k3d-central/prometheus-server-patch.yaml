@@ -1,0 +1,180 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-server
+spec:
+  template:
+    spec:
+      containers:
+      - name: prometheus
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        args:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus/'
+        - '--web.console.libraries=/etc/prometheus/console_libraries'
+        - '--web.console.templates=/etc/prometheus/consoles'
+        - '--storage.tsdb.retention.time=15d'
+        - '--web.enable-lifecycle'
+        - '--web.enable-admin-api'
+        - '--web.external-url=http://prometheus.k3d-central.local'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'k3d-central'
+        region: 'local'
+    
+    rule_files:
+      # - "first_rules.yml"
+      # - "second_rules.yml"
+    
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+      
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+        - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics
+      
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          action: keep
+          regex: node-exporter
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: metrics
+      
+      - job_name: 'kube-state-metrics'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          action: keep
+          regex: kube-state-metrics
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: http-metrics
+      
+      - job_name: 'pushgateway'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          action: keep
+          regex: pushgateway
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: metrics
+
+      - job_name: 'jaeger'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          action: keep
+          regex: jaeger-metrics
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: admin
+
+      - job_name: 'otel-collector'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          action: keep
+          regex: otel-collector
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: prometheus
+
+      # Kubernetes Services 자동 발견 - prometheus.io/scrape=true 어노테이션이 있는 Service만 스크래핑
+      - job_name: 'kubernetes-services'
+        kubernetes_sd_configs:
+        - role: service
+        relabel_configs:
+        # prometheus.io/scrape=true 어노테이션이 있는 Service만 대상으로 함
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        # prometheus.io/port 어노테이션에 지정된 포트 사용
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_port]
+          action: replace
+          target_label: __address__
+          regex: (.+)
+          replacement: ${__meta_kubernetes_service_cluster_ip}:${1}
+        # prometheus.io/path 어노테이션에 지정된 경로 사용, 기본값은 /metrics
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        # Service 메타데이터를 라벨로 추가
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_service_name]
+          action: replace
+          target_label: kubernetes_service_name
+      
+      # Federation from k3d-cluster2
+      - job_name: 'federate'
+        scrape_interval: 15s
+        honor_labels: true
+        metrics_path: '/federate'
+        params:
+          'match[]':
+            - '{job="prometheus"}'
+            - '{job="kubernetes-apiservers"}'
+            - '{job="kubernetes-nodes"}'
+            - '{job="node-exporter"}'
+            - '{job="kube-state-metrics"}'
+            - '{job="pushgateway"}'
+            - '{job="jaeger"}'
+            - '{job="otel-collector"}'
+            - '{job="kubernetes-services"}'
+            - '{__name__=~"up|prometheus_build_info"}'
+        static_configs:
+          - targets:
+            - 'host.docker.internal:30202'  # k3d-cluster2 NodePort via host

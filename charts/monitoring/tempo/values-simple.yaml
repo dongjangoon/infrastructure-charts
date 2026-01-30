@@ -1,0 +1,71 @@
+# 가장 간단한 Tempo 설정 (로컬 환경용)
+
+# 리소스 최소화
+resources:
+  limits:
+    cpu: 200m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# 프로브 설정 완화
+readinessProbe:
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 10
+
+livenessProbe:
+  initialDelaySeconds: 90
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 10
+
+# 서비스 타입
+service:
+  type: NodePort
+
+# 단일 레플리카
+replicas: 1
+
+# 스토리지 최소화
+persistence:
+  enabled: true
+  size: 5Gi
+
+# 메모리 ballast 제거
+extraArgs: []
+
+# 간단한 설정
+config: |
+  server:
+    http_listen_port: 3200
+    grpc_listen_port: 9095
+    
+  distributor:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+  
+  ingester:
+    lifecycler:
+      ring:
+        kvstore:
+          store: inmemory
+        replication_factor: 1
+  
+  memberlist:
+    abort_if_cluster_join_fails: false
+  
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal

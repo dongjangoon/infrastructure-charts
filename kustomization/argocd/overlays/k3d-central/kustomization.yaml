@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+
+resources:
+  - ../../base
+
+# k3d 로컬 개발 환경 설정
+patches:
+  # ArgoCD Server를 NodePort로 노출
+  - patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: argocd-server
+      spec:
+        type: ClusterIP
+        ports:
+          - name: http
+            port: 80
+            protocol: TCP
+            targetPort: 8080
+          - name: https
+            port: 443
+            protocol: TCP
+            targetPort: 8080
+    target:
+      kind: Service
+      name: argocd-server
+
+# 리소스 제한 (로컬 개발 환경)
+replicas:
+  - name: argocd-server
+    count: 1
+  - name: argocd-repo-server
+    count: 1
+  - name: argocd-application-controller
+    count: 1

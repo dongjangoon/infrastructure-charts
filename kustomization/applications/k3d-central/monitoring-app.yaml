@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  # Finalizer는 Application이 삭제될 때 리소스도 함께 삭제되도록 합니다
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # 프로젝트 (default 또는 별도 프로젝트 생성 가능)
+  project: default
+
+  # Git 소스 설정
+  source:
+    repoURL: https://github.com/dongjangoon/infrastructure-charts.git
+    targetRevision: main
+    path: kustomization/monitoring/overlays/k3d-central
+
+  # 배포 대상 클러스터
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+
+  # 동기화 정책
+  syncPolicy:
+    # 자동 동기화 활성화
+    automated:
+      prune: true        # Git에서 삭제된 리소스 자동 제거
+      selfHeal: true     # 클러스터에서 수동 변경 시 자동 복구
+      allowEmpty: false
+
+    # 동기화 옵션
+    syncOptions:
+      - CreateNamespace=true  # 네임스페이스 자동 생성
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+
+    # 재시도 정책
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

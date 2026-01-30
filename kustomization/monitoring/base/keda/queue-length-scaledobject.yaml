@@ -1,0 +1,24 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: queue-length-scaler
+  labels:
+    app: queue-processor
+spec:
+  scaleTargetRef:
+    name: queue-processor  # 실제 deployment 이름으로 변경 필요
+  minReplicaCount: 1
+  maxReplicaCount: 15
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+      metricName: queue_depth
+      threshold: '30'
+      query: sum(queue_depth{job="queue-processor"})
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+      metricName: processing_rate
+      threshold: '5'  # 처리율이 5개/초 이하일 때 스케일업
+      query: rate(messages_processed_total{job="queue-processor"}[1m])

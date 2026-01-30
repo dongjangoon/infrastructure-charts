@@ -1,0 +1,94 @@
+# Agent 모드 (메트릭 수집 및 전송) + Thanos Sidecar - 20250801
+
+prometheus:
+  enabled: true
+
+  prometheusSpec:
+    mode: "Agent"
+
+    replicas: 1
+
+    # Scraping interval
+    scrapeInterval: "30s"
+    evaluationInterval: "30s"
+    scrapeTimeout: "10s"
+
+    # Cluster labels
+    externalLabels:
+      cluster: "cluster2"
+      region: "ap-northeast-2"
+      environment: "test"
+      prometheus_instance: "cluster2-agent"
+      cluster_uuid: "cluster2-20250801"  # 고정값으로 변경
+      replica: "$(POD_NAME)"  # Thanos용 replica 레이블
+
+    # Thanos Sidecar 설정
+    thanos:
+      image: quay.io/thanos/thanos:v0.39.2
+      version: v0.39.2
+      objectStorageConfig:
+        name: thanos-objstore-secret
+        key: objstore.yml
+
+    # Remote Write 설정 (기존 유지)
+    remoteWrite:
+    - url: "http://${CENTRAL_PROMETHEUS_IP}:30090/api/v1/write"
+      writeRelabelConfigs:
+      - sourceLabels: [__name__]
+        regex: 'up|kube_.*|node_.*|container_.*|prometheus_.*'
+        action: keep
+      # container metric except
+      - sourceLabels: [__name__]
+        regex: 'container_blkio_.*|container_memory_failures_.*|container_memory_rss'
+        action: drop
+      # instance label add (prevent duplication)
+      - targetLabel: remote_cluster
+        replacement: "cluster2"
+      queueConfig:
+        maxSamplesPerSend: 1000
+        maxShards: 10
+        capacity: 10000
+
+    # 최소 스토리지 (Thanos Sidecar가 S3에 업로드하므로 짧게)
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+    # retention (Thanos로 장기 저장하므로 짧게)
+    retention: "2h"
+
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+      limits:
+        memory: "1Gi"
+        cpu: "1"
+
+grafana:
+  enabled: false
+
+# AlertManager 비활성화 (클러스터 1에서만 사용)
+alertmanager:
+  enabled: false
+
+# Node Exporter 활성화 (메트릭 생성)
+nodeExporter:
+  enabled: true
+
+# kube-state-metrics 활성화 (메트릭 생성)
+kubeStateMetrics:
+  enabled: true
+
+# 기본 규칙 비활성화 (중앙에서만 관리)
+defaultRules:
+  create: false
+
+# 프로메테우스 오퍼레이터 설정
+prometheusOperator:
+  enabled: true

@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- deployment.yaml
+- service.yaml
+- serviceaccount.yaml
+- configmap.yaml
+
+configMapGenerator:
+- name: grafana-dashboard-default
+  files:
+  - dashboards/all-in-one.json
+
+- name: grafana-dashboard-cluster
+  files:
+  - dashboards/cluster/cluster-overview.json
+
+- name: grafana-dashboard-node
+  files:
+  - dashboards/node/node-monitoring.json
+  - dashboards/node/vm-monitoring.json
+
+- name: grafana-dashboard-workload
+  files:
+  - dashboards/workload/pod-monitoring.json
+  - dashboards/workload/namespace-monitoring.json
+  - dashboards/workload/workload-monitoring.json
+
+- name: grafana-dashboard-tracing
+  files:
+  - dashboards/tracing/jaeger-traces.json
+
+- name: grafana-dashboard-logging
+  files:
+  - dashboards/logging/opensearch-logs.json
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+labels:
+- includeSelectors: true
+  pairs:
+    app: grafana

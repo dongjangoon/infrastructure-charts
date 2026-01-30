@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-ca-cert
+  namespace: kube-system
+data:
+  ca.crt: |
+    # Replace with your Harbor CA certificate (PEM format)

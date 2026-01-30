@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-lua-scripts
+  namespace: logging
+data:
+  java_log_processor.lua: |
+    function process_java_log(tag, timestamp, record)
+        -- level 필드 정규화 (대문자로 통일)
+        if record["level"] then
+            record["level"] = string.upper(record["level"])
+        end
+
+        -- is_structured_log 필드 추가 (구조화된 로그인지 표시)
+        if record["logger_name"] or record["thread_name"] then
+            record["is_structured_log"] = true
+        else
+            record["is_structured_log"] = false
+        end
+        
+        return 2, timestamp, record
+    end
+
+  environment_detector.lua: |
+    function extract_environment(tag, timestamp, record)
+        -- 네임스페이스 기반 환경 추출
+        if record["namespace"] then
+            local ns = record["namespace"]
+            
+            if string.find(ns, "prod") then
+                record["environment"] = "production"
+            elseif string.find(ns, "stg") or string.find(ns, "stage") or string.find(ns, "staging") then
+                record["environment"] = "staging"
+            elseif string.find(ns, "dev") then
+                record["environment"] = "development"
+            elseif string.find(ns, "test") or string.find(ns, "qa") then
+                record["environment"] = "test"
+            else
+                record["environment"] = "unknown"
+            end
+        end
+        
+        -- Pod 이름에서 애플리케이션 이름 추출 (StatefulSet, Deployment 패턴)
+        if record["pod_name"] then
+            local app_name = string.match(record["pod_name"], "^([^-]+)")
+            if app_name then
+                record["app_name"] = app_name
+            end
+        end
+        
+        return 2, timestamp, record
+    end

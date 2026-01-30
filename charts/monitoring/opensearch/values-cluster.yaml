@@ -1,0 +1,283 @@
+---
+clusterName: "opensearch-cluster"
+nodeGroup: "master"
+
+# Multi-node cluster configuration
+singleNode: false
+
+# The service that non master groups will try to connect to when joining the cluster
+# This should be set to clusterName + "-" + nodeGroup for your master group
+masterService: "opensearch-cluster-master"
+
+# OpenSearch roles that will be applied to this nodeGroup
+# These will be set as environment variable "node.roles". E.g. node.roles=master,ingest,data,remote_cluster_client
+roles:
+  - master
+  - ingest
+  - data
+  - remote_cluster_client
+
+# 3 nodes for cluster
+replicas: 3
+
+# if not set, falls back to parsing .Values.imageTag, then .Chart.appVersion.
+majorVersion: ""
+
+global:
+  # Set if you want to change the default docker registry, e.g. a private one.
+  dockerRegistry: ""
+
+# Allows you to add any config files in {{ .Values.opensearchHome }}/config
+opensearchHome: /usr/share/opensearch
+
+# such as opensearch.yml and log4j2.properties
+config:
+  opensearch.yml: |
+    cluster.name: opensearch-cluster
+    network.host: 0.0.0.0
+    
+    # Multi-node cluster discovery configuration
+    discovery.seed_hosts: ["opensearch-cluster-master-headless"]
+    cluster.initial_master_nodes: ["opensearch-cluster-master-0", "opensearch-cluster-master-1", "opensearch-cluster-master-2"]
+    
+    # Snapshot repository path
+    path.repo: ["/usr/share/opensearch/snapshots"]
+    
+    # Disable security for simplicity
+    plugins.security.disabled: true
+
+# Extra environment variables to append to this nodeGroup
+extraEnvs: []
+
+# Allows you to load environment variables from kubernetes secret or config map
+envFrom: []
+
+# A list of secrets and their paths to mount inside the pod
+secretMounts: []
+
+hostAliases: []
+
+image:
+  repository: "opensearchproject/opensearch"
+  # override image tag, which is .Chart.AppVersion by default
+  tag: ""
+  pullPolicy: "IfNotPresent"
+
+podAnnotations: {}
+
+# OpenSearch Statefulset annotations
+openSearchAnnotations: {}
+
+# additionals labels
+labels: {}
+
+opensearchJavaOpts: "-Xmx512m -Xms512m"
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "500m"
+    memory: "1Gi"
+
+initResources: {}
+sidecarResources: {}
+
+networkHost: "0.0.0.0"
+
+rbac:
+  create: false
+  serviceAccountAnnotations: {}
+  serviceAccountName: ""
+  automountServiceAccountToken: false
+
+podSecurityPolicy:
+  create: false
+  name: ""
+  spec:
+    privileged: true
+    fsGroup:
+      rule: RunAsAny
+    runAsUser:
+      rule: RunAsAny
+    seLinux:
+      rule: RunAsAny
+    supplementalGroups:
+      rule: RunAsAny
+    volumes:
+      - secret
+      - configMap
+      - persistentVolumeClaim
+      - emptyDir
+
+persistence:
+  enabled: true
+  enableInitChown: true
+  labels:
+    enabled: false
+    additionalLabels: {}
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  annotations: {}
+
+# Add snapshot volume
+extraVolumes:
+  - name: snapshots
+    emptyDir: {}
+
+extraVolumeMounts:
+  - name: snapshots
+    mountPath: /usr/share/opensearch/snapshots
+
+extraContainers: []
+extraInitContainers: []
+
+priorityClassName: ""
+
+# Pod anti-affinity to spread nodes across different hosts
+antiAffinityTopologyKey: "kubernetes.io/hostname"
+antiAffinity: "soft"
+
+customAntiAffinity: {}
+nodeAffinity: {}
+podAffinity: {}
+topologySpreadConstraints: []
+
+# Parallel deployment for faster startup
+podManagementPolicy: "Parallel"
+
+enableServiceLinks: true
+
+protocol: http
+httpPort: 9200
+transportPort: 9300
+metricsPort: 9600
+httpHostPort: ""
+transportHostPort: ""
+
+service:
+  labels: {}
+  labelsHeadless: {}
+  headless:
+    annotations: {}
+  type: NodePort
+  nodePort: "30920"
+  annotations: {}
+  httpPortName: http
+  transportPortName: transport
+  metricsPortName: metrics
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+  externalTrafficPolicy: ""
+
+updateStrategy: RollingUpdate
+
+# Pod disruption budget for high availability
+maxUnavailable: 1
+
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Disable security for simplicity
+securityConfig:
+  enabled: false
+
+terminationGracePeriod: 120
+sysctlVmMaxMapCount: 262144
+
+startupProbe:
+  tcpSocket:
+    port: 9200
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 30
+
+livenessProbe: {}
+
+readinessProbe:
+  tcpSocket:
+    port: 9200
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+schedulerName: ""
+
+imagePullSecrets: []
+nodeSelector: {}
+tolerations:
+  - key: "gpu"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+ingress:
+  enabled: false
+
+nameOverride: ""
+fullnameOverride: ""
+
+masterTerminationFix: false
+opensearchLifecycle: {}
+lifecycle: {}
+keystore: []
+
+networkPolicy:
+  create: false
+  http:
+    enabled: false
+
+fsGroup: ""
+
+sysctl:
+  enabled: false
+
+sysctlInit:
+  enabled: true
+
+plugins:
+  enabled: false
+  installList: []
+  removeList: []
+
+extraObjects: []
+
+# Index Template Configuration for automatic shard/replica management
+indexTemplate:
+  # Enable index template creation
+  enabled: true
+  # Template name
+  name: "logs-template"
+  # Index patterns that this template applies to
+  patterns: ["*-logs*", "*-log-*"]
+  # Number of primary shards for new indices
+  shards: 3
+  # Number of replica shards for new indices  
+  replicas: 1
+  # Index refresh interval
+  refreshInterval: "5s"
+  # Compression codec
+  codec: "best_compression"
+  # Template priority (higher number = higher priority)
+  priority: 100
+
+serviceMonitor:
+  enabled: true
+  path: /_prometheus/metrics
+  scheme: http
+  interval: 10s
+  labels: {}
+  tlsConfig: {}
+  basicAuth:
+    enabled: false

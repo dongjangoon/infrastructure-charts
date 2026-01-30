@@ -1,0 +1,53 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: alloy-kafka-dev
+servers: 1
+agents: 0
+image: rancher/k3s:v1.31.5-k3s1
+
+# Expose ports for ingress and services
+ports:
+  - port: 80:80
+    nodeFilters:
+      - loadbalancer
+  - port: 443:443
+    nodeFilters:
+      - loadbalancer
+  - port: 8080:8080
+    nodeFilters:
+      - loadbalancer
+
+# Registry configuration for local development
+registries:
+  create:
+    name: alloy-kafka-registry
+    host: "0.0.0.0"
+    hostPort: "5001"
+
+# Volume mounts for persistent storage
+volumes:
+  - volume: /tmp/k3d-alloy-kafka:/var/lib/rancher/k3s/storage
+    nodeFilters:
+      - all
+
+options:
+  k3d:
+    wait: true
+    timeout: 60s
+    disableLoadbalancer: false
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:0
+    nodeLabels:
+      - label: environment=development
+        nodeFilters:
+          - all
+
+# Environment variables for development
+env:
+  - envVar: K3S_KUBECONFIG_OUTPUT=/tmp/kubeconfig-alloy-kafka.yaml
+    nodeFilters:
+      - server:0

@@ -1,0 +1,13 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  profile: remote
+  values:
+    # istiodRemote:
+    #   injectionPath: /inject/cluster/cluster2/net/network2
+    global:
+      remotePilotAddress: "east-nlb-istio-eastwest-8f0008944b02d444.elb.ap-northeast-2.amazonaws.com"
+      meshID: mesh1
+      multiCluster:
+        clusterName: cluster2
+      network: network2

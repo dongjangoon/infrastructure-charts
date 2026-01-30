@@ -1,0 +1,33 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - istio-system/app-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /argocd/
+    - uri:
+        prefix: /argocd
+    route:
+    - destination:
+        host: argocd-server
+        port:
+          number: 80
+      headers:
+        response:
+          add:
+            X-Frame-Options: "SAMEORIGIN"
+  - match:
+    - uri:
+        regex: "/argocd\\.(.*)"  # gRPC 경로 처리
+    route:
+    - destination:
+        host: argocd-server
+        port:
+          number: 443

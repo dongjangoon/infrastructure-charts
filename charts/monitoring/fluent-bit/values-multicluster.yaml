@@ -1,0 +1,187 @@
+# Multi-cluster Fluent Bit configuration
+image:
+  repository: fluent/fluent-bit
+  tag: "4.0"
+
+serviceAccount:
+  create: true
+
+rbac:
+  create: true
+
+# Init container to get cluster name dynamically
+initContainers:
+  - name: get-cluster-name
+    image: alpine:3.18
+    command: ["/bin/sh", "-c"]
+    args:
+      - "echo $NODE_NAME | sed 's/k3d-//g' | sed 's/-server-.*//g' | sed 's/-agent-.*//g' > /shared/cluster-name"
+    env:
+      - name: NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
+    volumeMounts:
+      - name: shared-data
+        mountPath: /shared
+
+# Add shared volume
+daemonSetVolumes:
+  - name: varlog
+    hostPath:
+      path: /var/log
+  - name: varlibdockercontainers
+    hostPath:
+      path: /var/lib/docker/containers
+  - name: shared-data
+    emptyDir: {}
+
+daemonSetVolumeMounts:
+  - name: varlog
+    mountPath: /var/log
+  - name: varlibdockercontainers
+    mountPath: /var/lib/docker/containers
+    readOnly: true
+  - name: shared-data
+    mountPath: /shared
+
+config:
+  service: |
+    [SERVICE]
+        Daemon off
+        Flush 5
+        Log_Level info
+        Parsers_File parsers.conf
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+
+  inputs: |
+    [INPUT]
+        Name tail
+        Path /var/log/containers/*.log
+        multiline.parser cri
+        Tag kube.*
+        Skip_Long_Lines On
+        Skip_Empty_Lines On
+
+  filters: |
+    [FILTER]
+        Name kubernetes
+        Match kube.*
+        Merge_Log On
+        K8S-Logging.Parser On
+        K8S-Logging.Exclude On
+        Labels On
+
+    [FILTER]
+        Name lua
+        Match kube.*
+        Script /fluent-bit/etc/conf/add_cluster_name.lua
+        Call add_cluster_name
+
+    # 클러스터별 태그 재작성
+    [FILTER]
+        Name rewrite_tag
+        Match kube.*
+        Rule $cluster_name ^(.+)$ cluster.$1 false
+
+  outputs: |
+    # 각 클러스터별 OUTPUT 설정 (날짜 없이)
+    [OUTPUT]
+        Name opensearch
+        Match cluster.*
+        Host ${OPENSEARCH_HOST}
+        Port ${OPENSEARCH_PORT}
+        # 클러스터명만 포함한 인덱스
+        Index ${cluster_name}
+        Type _doc
+        tls Off
+        tls.verify Off
+        Suppress_Type_Name On
+        Replace_Dots On
+        Retry_Limit 5
+        # Logstash 형식 비활성화 (날짜 추가 방지)
+        Logstash_Format Off
+
+  parsers: |
+    [PARSER]
+        Name cri
+        Format regex
+        Regex ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+  # Enhanced Lua script to add cluster info and metadata
+  extraFiles:
+    add_cluster_name.lua: |
+      local cluster_name_cache = nil
+
+      function add_cluster_name(tag, timestamp, record)
+          -- 클러스터 이름을 한 번만 읽어 캐시합니다. (성능 개선)
+          if cluster_name_cache == nil then
+              local file = io.open("/shared/cluster-name", "r")
+              if file then
+                  cluster_name_cache = file:read("*all"):gsub("%s+", "")
+                  file:close()
+              else
+                  cluster_name_cache = "unknown"
+              end
+          end
+
+          -- 캐시된 이름 사용
+          record["cluster_name"] = cluster_name_cache
+
+          -- Add environment detection based on cluster name
+          local cluster_lower = string.lower(record["cluster_name"] or "")
+          if string.find(cluster_lower, "prd") then
+              record["environment"] = "prd"
+          elseif string.find(cluster_lower, "dev") then
+              record["environment"] = "dev"
+          elseif string.find(cluster_lower, "stg") then
+              record["environment"] = "stg"
+          else
+              record["environment"] = "unknown"
+          end
+
+          -- Add log source
+          record["log_source"] = "fluent-bit"
+
+          -- Determine log level from message if possible
+          local message = record["log"] or record["message"] or ""
+          local message_lower = string.lower(message)
+          if string.find(message_lower, "error") or string.find(message_lower, "err") then
+              record["log_level"] = "error"
+          elseif string.find(message_lower, "warn") then
+              record["log_level"] = "warning"
+          elseif string.find(message_lower, "info") then
+              record["log_level"] = "info"
+          elseif string.find(message_lower, "debug") then
+              record["log_level"] = "debug"
+          else
+              record["log_level"] = "unknown"
+          end
+
+          return 1, timestamp, record
+      end
+
+# Environment variables for dynamic configuration
+env:
+  - name: OPENSEARCH_HOST
+    value: "10.43.20.89"  # Use Kubernetes service name
+  - name: OPENSEARCH_PORT
+    value: "30920"
+
+resources:
+  limits:
+    memory: 200Mi
+    cpu: 200m
+  requests:
+    memory: 100Mi
+    cpu: 100m
+
+tolerations:
+  - operator: "Exists"
+    effect: "NoSchedule"
+  - operator: "Exists"
+    effect: "NoExecute"

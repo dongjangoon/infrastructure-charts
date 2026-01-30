@@ -1,0 +1,248 @@
+# Fluent Bit Official Helm Chart values
+image:
+  repository: fluent/fluent-bit
+  tag: "4.0"
+
+serviceAccount:
+  create: true
+
+serviceMonitor:
+  enabled: true
+
+rbac:
+  create: true
+
+# Init container to get dynamic cluster name
+initContainers:
+  - name: get-cluster-name
+    image: bitnami/kubectl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        CLUSTER_NAME=$(kubectl config current-context)
+        echo "Detected cluster: $CLUSTER_NAME"
+        echo -n "$CLUSTER_NAME" > /shared/cluster-name
+    volumeMounts:
+      - name: shared-data
+        mountPath: /shared
+    securityContext:
+      runAsUser: 0
+
+# Add shared volume for cluster name
+daemonSetVolumes:
+  - name: varlog
+    hostPath:
+      path: /var/log
+  - name: varlibdockercontainers
+    hostPath:
+      path: /var/lib/docker/containers
+  - name: shared-data
+    emptyDir: {}
+
+daemonSetVolumeMounts:
+  - name: varlog
+    mountPath: /var/log
+  - name: varlibdockercontainers
+    mountPath: /var/lib/docker/containers
+    readOnly: true
+  - name: shared-data
+    mountPath: /shared
+
+config:
+  service: |
+    [SERVICE]
+        Daemon off
+        Flush 5
+        Log_Level info
+        Parsers_File parsers.conf
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+        # Read cluster name from shared volume
+        Env CLUSTER_NAME_FILE /shared/cluster-name
+
+  inputs: |
+    # Pre-process to read cluster name
+    [INPUT]
+        Name exec
+        Tag cluster_info
+        Command /bin/sh -c 'CLUSTER_NAME=$(cat /shared/cluster-name 2>/dev/null || echo "unknown"); export CLUSTER_NAME; echo "{\"cluster_name\":\"$CLUSTER_NAME\"}"'
+        Interval_Sec 60
+        Oneshot true
+
+    [INPUT]
+        Name tail
+        Path /var/log/containers/*.log
+        multiline.parser cri
+        Tag kube.*
+        Buffer_Chunk_Size 50MB
+        Buffer_Max_Size 50MB
+        Skip_Long_Lines On
+        Skip_Empty_Lines On
+        Refresh_Interval 10
+
+    [INPUT]
+        Name          systemd
+        Tag           host.*
+        Systemd_Filter _SYSTEMD_UNIT=kubelet.service
+        Systemd_Filter _SYSTEMD_UNIT=containerd.service
+        Read_From_Tail On
+
+  filters: |
+    # Extract cluster name from cluster_info tag
+    [FILTER]
+        Name parser
+        Match cluster_info
+        Key_Name message
+        Parser json
+        Reserve_Data true
+
+    # Set cluster name as global variable
+    [FILTER]
+        Name lua
+        Match cluster_info
+        Script /fluent-bit/scripts/set_cluster_name.lua
+        Call set_cluster_name
+
+    [FILTER]
+        Name kubernetes
+        Match kube.*
+        Kube_URL https://kubernetes.default.svc:443
+        Kube_CA_File /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix kube.var.log.containers.
+        Merge_Log On
+        K8S-Logging.Parser On
+        K8S-Logging.Exclude Off
+        Labels On
+
+    # Add cluster name from file
+    [FILTER]
+        Name lua
+        Match kube.*
+        Script /fluent-bit/scripts/add_cluster_name.lua
+        Call add_cluster_name
+
+    # 시스템 네임스페이스 로그에 log_type=system 추가
+    [FILTER]
+        Name modify
+        Match kube.*
+        Condition Key_value_matches kubernetes.namespace_name ^(kube-system|kube-public|istio-system|monitoring|cert-manager|ingress-nginx)$
+        Add log_type system
+
+    # 애플리케이션 네임스페이스 로그에 log_type=application 추가
+    [FILTER]
+        Name modify
+        Match kube.*
+        Condition Key_value_does_not_match kubernetes.namespace_name ^(kube-system|kube-public|istio-system|monitoring|cert-manager|ingress-nginx)$
+        Add log_type application
+
+    # host.* 태그에 log_type=host 추가
+    [FILTER]
+        Name lua
+        Match host.*
+        Script /fluent-bit/scripts/add_cluster_name.lua
+        Call add_cluster_name
+
+    [FILTER]
+        Name modify
+        Match host.*
+        Add log_type host
+        Add environment local
+        Add log_source fluent-bit
+
+  outputs: |
+    # 시스템 로그 출력 (동적 인덱스 이름 사용)
+    [OUTPUT]
+        Name opensearch
+        Match kube.*
+        Host opensearch-cluster-master-headless.monitoring.svc.cluster.local
+        Port 9200
+        Index system-logs-%{cluster_name}-%Y.%m.%d
+        Type _doc
+        tls Off
+        tls.verify Off
+        Suppress_Type_Name On
+        Replace_Dots On
+        Retry_Limit 5
+        Condition Key_value_equals log_type system
+
+    # host.* 태그 시스템 로그 출력 (동적 인덱스 이름 사용)
+    [OUTPUT]
+        Name opensearch
+        Match host.*
+        Host opensearch-cluster-master-headless.monitoring.svc.cluster.local
+        Port 9200
+        Index host-logs-%{cluster_name}-%Y.%m.%d
+        Type _doc
+        tls Off
+        tls.verify Off
+        Suppress_Type_Name On
+        Replace_Dots On
+        Retry_Limit 5
+
+    # 애플리케이션 로그 출력 (동적 인덱스 이름 사용)
+    [OUTPUT]
+        Name opensearch
+        Match kube.*
+        Host opensearch-cluster-master-headless.monitoring.svc.cluster.local
+        Port 9200
+        Index app-logs-%{cluster_name}-%Y.%m.%d
+        Type _doc
+        tls Off
+        tls.verify Off
+        Suppress_Type_Name On
+        Replace_Dots On
+        Retry_Limit 5
+        Condition Key_value_equals log_type application
+
+  parsers: |
+    [PARSER]
+        Name cri
+        Format regex
+        Regex ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name json
+        Format json
+
+  # Lua scripts for dynamic cluster name handling
+  extraFiles:
+    add_cluster_name.lua: |
+      function add_cluster_name(tag, timestamp, record)
+          local file = io.open("/shared/cluster-name", "r")
+          if file then
+              local cluster_name = file:read("*all"):gsub("%s+", "")
+              file:close()
+              record["cluster_name"] = cluster_name
+          else
+              record["cluster_name"] = "unknown"
+          end
+          record["environment"] = "local"
+          record["log_source"] = "fluent-bit"
+          return 1, timestamp, record
+      end
+
+    set_cluster_name.lua: |
+      function set_cluster_name(tag, timestamp, record)
+          -- This function can be used to set global variables if needed
+          return 1, timestamp, record
+      end
+resources:
+  limits:
+    memory: 200Mi
+    cpu: 200m
+  requests:
+    memory: 100Mi
+    cpu: 100m
+
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  - operator: "Exists"
+    effect: "NoExecute"
+  - operator: "Exists"
+    effect: "NoSchedule"

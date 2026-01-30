@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Daemon off
+        Flush 5
+        Log_Level warn
+        Parsers_File parsers.conf
+        storage.path /var/fluent-bit/state/flb-storage/
+        storage.sync normal
+        storage.checksum off
+        storage.backlog.mem_limit 5M
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+        Health_Check On
+
+    @INCLUDE userapp-log.conf
+
+    [FILTER]
+        Name modify
+        Match kube.*
+        Add cluster_name CLUSTER_NAME_PLACEHOLDER
+
+    [FILTER]
+        Name lua
+        Match kube.*
+        Script /fluent-bit/scripts/environment_detector.lua
+        Call extract_environment
+
+    [FILTER]
+        Name multiline
+        Match kube.*
+        Multiline.Key_Content message
+        Multiline.Parser java
+
+    [OUTPUT]
+        Name opensearch
+        Match *
+        Host opensearch-cluster-master
+        Port 9200
+        Index INDEX_PLACEHOLDER
+        Type _doc
+        Include_Tag_Key true
+        Tag_Key @svc_name
+        Suppress_Type_Name On
+        HTTP_User admin
+        HTTP_Passwd admin
+        tls On
+        tls.verify Off

@@ -1,0 +1,39 @@
+# cluster1에서 istiod를 외부에서 접근 가능하게 설정
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: cross-network-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: eastwestgateway
+  servers:
+  - port:
+      number: 15443
+      name: tls
+      protocol: TLS
+    tls:
+      mode: ISTIO_MUTUAL
+    hosts:
+    - "*.local"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: istio-eastwestgateway
+  namespace: istio-system
+  labels:
+    istio: eastwestgateway
+spec:
+  type: LoadBalancer
+  ports:
+  - name: status-port
+    port: 15021
+    protocol: TCP
+    targetPort: 15021
+  - name: tls
+    port: 15443
+    protocol: TCP
+    targetPort: 15443
+  selector:
+    istio: eastwestgateway

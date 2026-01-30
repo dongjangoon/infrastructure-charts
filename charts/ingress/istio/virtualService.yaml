@@ -1,0 +1,104 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: app-routes
+  namespace: istio-system
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - app-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /api/spring/
+      route:
+        - destination:
+            host: springboot.app.svc.cluster.local
+            port:
+              number: 8080
+    - match:
+        - uri:
+            prefix: /api/fastapi/
+      route:
+        - destination:
+            host: fastapi.app.svc.cluster.local
+            port:
+              number: 3101
+    - match:
+        - uri:
+            prefix: /grafana
+      route:
+        - destination:
+            host: kube-prometheus-stack-grafana.monitoring.svc.cluster.local
+            port:
+              number: 80
+
+    - match:
+        - uri:
+            prefix: /prometheus
+      rewrite:
+        uri: /
+      route:
+        - destination:
+            host: kube-prometheus-stack-prometheus.monitoring.svc.cluster.local
+            port:
+              number: 9090
+
+    - match:
+        - uri:
+            prefix: /opensearch
+      route:
+        - destination:
+            host: opensearch-dashboard-opensearch-dashboards.monitoring.svc.cluster.local
+            port:
+              number: 5601
+
+    - match:
+        - uri:
+            prefix: /kiali
+      route:
+        - destination:
+            host: kiali.istio-system.svc.cluster.local
+            port:
+              number: 20001
+
+    # API Server
+    - match:
+      - uri:
+          prefix: "/api/stock/"
+      route:
+        - destination:
+            host: ai-system-stock-api.ai-system.svc.cluster.local
+            port:
+              number: 8085
+
+    # AI Agent
+    - match:
+      - uri:
+          prefix: "/api/ai-agent/"
+      route:
+        - destination:
+            host: ai-system-ai-agent.ai-system.svc.cluster.local
+            port:
+              number: 8000
+
+    # MCP Servers
+    - match:
+      - uri:
+          prefix: "/api/k8s-mcp/"
+      route:
+        - destination:
+            host: ai-system-k8s-mcp.ai-system.svc.cluster.local
+            port:
+              number: 8090
+
+    # Frontend
+    - match:
+      - uri:
+          prefix: "/"
+      route:
+        - destination:
+            host: ai-system-ai-frontend.ai-system.svc.cluster.local
+            port:
+              number: 80

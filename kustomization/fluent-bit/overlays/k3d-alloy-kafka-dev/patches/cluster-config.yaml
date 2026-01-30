@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Daemon off
+        Flush 5
+        Log_Level info
+        Parsers_File parsers.conf
+        storage.path /var/fluent-bit/state/flb-storage/
+        storage.sync normal
+        storage.checksum off
+        storage.backlog.mem_limit 5M
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+        Health_Check On
+
+    @INCLUDE userapp-log.conf
+
+    # Kubernetes 메타데이터 추가 (파일명에서 네임스페이스 추출하므로 비활성화)
+    # [FILTER]
+    #     Name kubernetes
+    #     Match kube.*
+    #     Kube_URL https://kubernetes.default.svc:443
+    #     Kube_CA_File /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    #     Kube_Token_File /var/run/secrets/kubernetes.io/serviceaccount/token
+    #     Kube_Tag_Prefix kube.var.log.containers.
+    #     Merge_Log On
+    #     Merge_Log_Key log_processed
+    #     K8S-Logging.Parser On
+    #     K8S-Logging.Exclude Off
+    #     Annotations Off
+    #     Labels On
+
+    # 클러스터명 추가
+    [FILTER]
+        Name modify
+        Match kube.*
+        Add cluster_name k3d-alloy-kafka-dev
+
+
+    # 파일 경로에서 파드명과 네임스페이스 추출
+    [FILTER]
+        Name parser
+        Match kube.*
+        Key_Name filepath
+        Parser container_path_parser
+        Reserve_Data On
+
+    # 불필요한 필드 제거 및 정리
+    [FILTER]
+        Name modify
+        Match kube.*
+        Remove filepath
+        Remove container_id
+        Remove logtag
+        Remove log_source
+
+    # 환경 정보 추출 및 로그 레벨 감지
+    [FILTER]
+        Name lua
+        Match kube.*
+        Script /fluent-bit/scripts/environment_detector.lua
+        Call extract_environment
+
+    # Java 멀티라인 로그 처리
+    [FILTER]
+        Name multiline
+        Match kube.*
+        Multiline.Key_Content message
+        Multiline.Parser java
+
+    # -------------------------
+    # Output: 인프라 로그 (kube-system, logging, monitoring, ingress-nginx)
+    # -------------------------
+    [OUTPUT]
+        Name opensearch
+        Match_Regex kube\.(kube-system|logging|monitoring|ingress-nginx)
+        Host opensearch-cluster-master
+        Port 9200
+        Index infra-logs
+        Include_Tag_Key true
+        Tag_Key @svc_name
+        Suppress_Type_Name On
+        tls Off
+
+    # -------------------------
+    # Output: 애플리케이션 로그 (클러스터별)
+    # -------------------------
+    [OUTPUT]
+        Name opensearch
+        Match_Regex ^(?!kube\.(kube-system|logging|monitoring|ingress-nginx)$).*
+        Host opensearch-cluster-master
+        Port 9200
+        Index k3d-alloy-kafka-dev-logs
+        Include_Tag_Key true
+        Tag_Key @svc_name
+        Suppress_Type_Name On
+        tls Off

@@ -1,0 +1,15 @@
+# Certificate 리소스 생성
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: prometheus-server-cert
+  namespace: monitoring
+spec:
+  secretName: prometheus-tls
+  issuerRef:
+    name: selfsigned-issuer  # 또는 기존 issuer
+    kind: ClusterIssuer
+  commonName: prometheus.monitoring.local
+  dnsNames:
+  - prometheus.monitoring.local
+  - ${NODE_IP}  # 노드 IP도 추가

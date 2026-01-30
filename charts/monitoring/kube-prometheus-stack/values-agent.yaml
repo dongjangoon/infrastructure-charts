@@ -1,0 +1,49 @@
+# Agent 모드 (메트릭 수집 및 전송) - 20250728
+prometheus:
+  enabled: true
+
+  prometheusSpec:
+    mode: "Agent"  # Agent 모드 설정
+
+    replicas: 1
+
+    # Cluster labels 추가 - 중앙에서 구분용
+    externalLabels:
+      cluster: "cluster2"
+      environment: "test"
+      prometheus_instance: "cluster2-agent"
+
+    # Remote Write 설정
+    remoteWrite:
+    - url: "http://${CENTRAL_PROMETHEUS_IP}:30090/api/v1/write"  # 중앙 Prometheus 주소
+
+
+    ### 아래 주석 처리된 부분은 필요시 활성화 ###
+
+    # Scraping interval - central cluster 보다 짧게 설정 (메트릭 손실 방지, 선택적)
+    # scrapeInterval: "30s"
+    # evaluationInterval: "30s"
+    # scrapeTimeout: "10s"
+
+      # basicAuth: # 중앙 Prometheus 인증 정보
+      #  username: 
+      #    name: prometheus-remote-auth
+      #    key: username
+      #  password:
+      #    name: prometheus-remote-auth
+      #    key: password
+      # writeRelabelConfigs:  # 전송할 메트릭 필터링 (필요시 설정)
+      # - sourceLabels: [__name__]
+      #   regex: 'up|kube_.*|node_.*|container_.*|prometheus_.*'
+      #   action: keep
+      # # container metric except
+      # - sourceLabels: [__name__]
+      #   regex: 'container_blkio_.*|container_memory_failures_.*|container_memory_rss'
+      #   action: drop
+      # # instance label add (prevent duplication)
+      # - targetLabel: remote_cluster
+      #   replacement: "cluster2"
+      # queueConfig:
+      #   maxSamplesPerSend: 1000
+      #   maxShards: 10
+      #   capacity: 10000

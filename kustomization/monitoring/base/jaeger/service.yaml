@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-ui
+  labels:
+    app: jaeger
+    component: ui
+spec:
+  type: ClusterIP
+  selector:
+    app: jaeger
+  ports:
+  - name: ui
+    port: 16686
+    targetPort: 16686
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-collector
+  labels:
+    app: jaeger
+    component: collector
+spec:
+  type: ClusterIP
+  selector:
+    app: jaeger
+  ports:
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+    protocol: TCP
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+    protocol: TCP
+  - name: jaeger-grpc
+    port: 14250
+    targetPort: 14250
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-agent
+  labels:
+    app: jaeger
+    component: agent
+spec:
+  type: ClusterIP
+  selector:
+    app: jaeger
+  ports:
+  - name: jaeger-compact
+    port: 6831
+    targetPort: 6831
+    protocol: UDP
+  - name: jaeger-binary
+    port: 6832
+    targetPort: 6832
+    protocol: UDP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-metrics
+  labels:
+    app: jaeger
+    component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app: jaeger
+  ports:
+  - name: admin
+    port: 14269
+    targetPort: 14269
+    protocol: TCP

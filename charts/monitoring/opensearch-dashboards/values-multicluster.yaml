@@ -1,0 +1,132 @@
+# 멀티 클러스터 로깅용 OpenSearch Dashboards 설정
+
+# 로컬 OpenSearch 연결
+opensearchHosts: "http://${OPENSEARCH_IP}:9200"  # 로컬 OpenSearch IP로 변경
+replicaCount: 1
+
+# 테스트 환경용 리소스 최적화
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "200m"
+    memory: "512Mi"
+
+# 보안 비활성화 (테스트 환경)
+extraEnvs:
+  - name: DISABLE_SECURITY_DASHBOARDS_PLUGIN
+    value: "true"
+
+config:
+  opensearch_dashboards.yml: |
+    server.host: 0.0.0.0
+    server.port: 5601
+    server.name: 'opensearch-dashboards-multicluster'
+    server.basePath: '/opensearch'
+    server.rewriteBasePath: true
+    
+    # 로컬 OpenSearch 연결
+    opensearch:
+      hosts: ["http://${OPENSEARCH_IP}:9200"]  # 로컬 OpenSearch IP
+    
+    opensearch.ssl.verificationMode: none
+    logging.quiet: true
+    
+    # 멀티 클러스터 로깅을 위한 기본 설정
+    opensearch_dashboards.defaultAppId: "discover"
+    opensearch_dashboards.index: ".opensearch_dashboards"
+    
+    # 인덱스 패턴 자동 생성 설정
+    data.autocomplete.valueSuggestions.enabled: true
+    data.autocomplete.valueSuggestions.terminateAfter: 100000
+
+# NodePort 서비스로 외부 접근 허용
+service:
+  type: NodePort
+  nodePort: "30002"
+  port: 5601
+
+# 테스트 환경용 - 단일 복제본
+autoscaling:
+  enabled: false
+
+# 컨테이너 시작 시 인덱스 패턴 자동 생성을 위한 lifecycle hook
+lifecycle:
+  postStart:
+    exec:
+      command:
+        - bash
+        - -c
+        - |
+          #!/bin/bash
+          # OpenSearch Dashboards 시작 대기
+          DASHBOARDS_URL=http://localhost:5601/opensearch
+          OPENSEARCH_URL=http://${OPENSEARCH_IP}:9200  # 로컬 OpenSearch IP
+          
+          # 서비스 시작 대기
+          sleep 30
+          
+          # 기본 인덱스 패턴 생성 (멀티 클러스터용)
+          curl -X POST "$DASHBOARDS_URL/api/saved_objects/index-pattern/multicluster-logs-*" \
+            -H "kbn-xsrf: true" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "attributes": {
+                "title": "*-*",
+                "timeFieldName": "@timestamp"
+              }
+            }' || true
+            
+          # 클러스터별 인덱스 패턴 생성
+          curl -X POST "$DASHBOARDS_URL/api/saved_objects/index-pattern/dev-cluster-logs" \
+            -H "kbn-xsrf: true" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "attributes": {
+                "title": "dev-cluster-*",
+                "timeFieldName": "@timestamp"
+              }
+            }' || true
+            
+          curl -X POST "$DASHBOARDS_URL/api/saved_objects/index-pattern/prod-cluster-logs" \
+            -H "kbn-xsrf: true" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "attributes": {
+                "title": "prod-cluster-*",
+                "timeFieldName": "@timestamp"
+              }
+            }' || true
+
+# 보안 설정 비활성화
+securityConfig:
+  enabled: false
+
+# 프로브 설정 조정 (로컬 OpenSearch 연결)
+startupProbe:
+  tcpSocket:
+    port: 5601
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+  successThreshold: 1
+  initialDelaySeconds: 30
+
+livenessProbe:
+  tcpSocket:
+    port: 5601
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 10
+  successThreshold: 1
+  initialDelaySeconds: 30
+
+readinessProbe:
+  tcpSocket:
+    port: 5601
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+  successThreshold: 1
+  initialDelaySeconds: 30

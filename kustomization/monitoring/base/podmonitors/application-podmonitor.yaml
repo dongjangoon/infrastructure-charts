@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: application-pods
+  labels:
+    app: application-monitor
+spec:
+  selector:
+    matchLabels:
+      monitoring: "enabled"
+  podMetricsEndpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+  - port: http
+    interval: 30s 
+    path: /actuator/prometheus  # Spring Boot actuator example
+  - port: http-metrics
+    interval: 30s
+    path: /metrics

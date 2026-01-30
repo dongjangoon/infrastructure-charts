@@ -1,0 +1,82 @@
+# 데이터 노드 values 파일
+# opensearch-data-values.yaml
+
+clusterName: "opensearch-cluster"
+nodeGroup: "data"
+
+# 데이터 노드 설정
+masterService: "opensearch-cluster-master"
+roles:
+  - data
+  - ingest
+
+replicas: 3
+
+# 데이터 노드 리소스 (약간 더 많이)
+resources:
+  requests:
+    cpu: "200m"
+    memory: "1Gi"
+  limits:
+    cpu: "300m"
+    memory: "2Gi"
+
+# JVM 힙 메모리 설정
+opensearchJavaOpts: "-Xmx1g -Xms1g"
+
+# 클러스터 설정
+config:
+  opensearch.yml: |
+    cluster.name: opensearch-cluster
+
+    # 네트워크 설정
+    network.host: 0.0.0.0
+
+    # 디스커버리 설정
+    discovery.seed_hosts: opensearch-cluster-master-headless
+    cluster.initial_master_nodes:
+      - opensearch-cluster-master-0
+      - opensearch-cluster-master-1
+      - opensearch-cluster-master-2
+
+    # 보안 설정 (개발 환경용)
+    plugins.security.disabled: true
+
+    # 성능 최적화
+    bootstrap.memory_lock: false
+
+    # 로그 레벨 설정
+    logger.level: WARN
+
+plugins:
+  enabled: true
+  installLlist:
+    - repository-s3
+
+# 퍼시스턴트 볼륨 설정 (데이터 노드는 더 큰 용량)
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClass: "" # 기본 스토리지 클래스 사용
+
+# 서비스 설정
+service:
+  type: ClusterIP
+  port: 9200
+
+# 보안 컨텍스트
+securityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+
+# 초기화 컨테이너 비활성화
+sysctlInitContainer:
+  enabled: false
+
+# OpenSearch 대시보드 비활성화
+dashboards:
+  enabled: false

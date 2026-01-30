@@ -1,0 +1,24 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: http-requests-scaler
+  labels:
+    app: http-requests-scaler
+spec:
+  scaleTargetRef:
+    name: web-app  # 실제 deployment 이름으로 변경 필요
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+      metricName: http_requests_per_second
+      threshold: '100'
+      query: sum(rate(http_requests_total{job="web-app"}[1m])) by (instance)
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+      metricName: response_time_p95
+      threshold: '500'  # 500ms
+      query: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="web-app"}[2m])) * 1000

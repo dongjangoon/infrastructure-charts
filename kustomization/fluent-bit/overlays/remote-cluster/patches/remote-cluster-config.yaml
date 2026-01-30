@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    # =============================================================================
+    # Fluent Bit Configuration for Remote Cluster Log Collection
+    # =============================================================================
+    
+    # -----------------------------------------------------------------------------
+    # SERVICE: Global fluent-bit configuration
+    # -----------------------------------------------------------------------------
+    [SERVICE]
+        # Run in foreground mode for containers
+        Daemon off
+        # Flush buffered data every 5 seconds
+        Flush 5
+        # Set log level (debug, info, warn, error)
+        Log_Level info
+        # Load parser definitions from external file
+        Parsers_File parsers.conf
+        storage.path /var/fluent-bit/state/flb-storage/
+        # Data sync mode (normal, full)
+        storage.sync normal
+        # Disable data integrity check for performance
+        storage.checksum off
+        # Memory limit for buffered data
+        storage.backlog.mem_limit 5M
+        # Enable HTTP server for health checks
+        HTTP_Server On
+        # HTTP server listen address
+        HTTP_Listen 0.0.0.0
+        # HTTP server port for metrics/health
+        HTTP_Port 2020
+        # Enable health check endpoint
+        Health_Check On
+
+    # -----------------------------------------------------------------------------
+    # INPUT: Collect Kubernetes container logs
+    # -----------------------------------------------------------------------------
+    [INPUT]
+        # Use tail input plugin for log files
+        Name tail
+        # Path to Kubernetes container logs
+        Path /var/log/containers/*.log
+        # Use CRI (Container Runtime Interface) parser
+        Parser cri
+        # SQLite database to track file positions
+        DB /var/fluent-bit/state/flb_log.db
+        # Tag all records with 'kube.' prefix
+        Tag kube.*
+        # Memory buffer limit per file
+        Mem_Buf_Limit 10MB
+        # Skip lines that are too long
+        Skip_Long_Lines On
+        # Check for new files every 5 seconds
+        Refresh_Interval 5
+
+    # -----------------------------------------------------------------------------
+    # FILTER: Add cluster metadata
+    # -----------------------------------------------------------------------------
+    [FILTER]
+        # Use modify filter to add/modify fields
+        Name modify
+        # Apply to all records with 'kube.' tag
+        Match kube.*
+        # Add static cluster name field - CHANGE THIS FOR EACH CLUSTER
+        Add cluster_name remote-cluster-name
+
+    # -----------------------------------------------------------------------------
+    # FILTER: Enhance logs with environment detection (using Lua script)
+    # -----------------------------------------------------------------------------
+    [FILTER]
+        # Use Lua script filter
+        Name lua
+        # Apply to all Kubernetes logs
+        Match kube.*
+        # Lua script path
+        Script /fluent-bit/scripts/environment_detector.lua
+        # Function name to call in the script
+        Call extract_environment
+
+    # -----------------------------------------------------------------------------
+    # FILTER: Handle Java multiline logs (stack traces, etc.)
+    # -----------------------------------------------------------------------------
+    [FILTER]
+        # Use multiline filter for Java logs
+        Name multiline
+        # Apply to all Kubernetes logs
+        Match kube.*
+        # Field that contains the log message
+        Multiline.Key_Content message
+        # Use Java multiline parser
+        Multiline.Parser java
+
+    # -----------------------------------------------------------------------------
+    # OUTPUT: Send logs to remote OpenSearch cluster
+    # -----------------------------------------------------------------------------
+    [OUTPUT]
+        # Use OpenSearch output plugin
+        Name opensearch
+        # Send all logs to OpenSearch
+        Match *
+        # CHANGE THIS: External OpenSearch host/IP
+        Host YOUR_OPENSEARCH_EXTERNAL_IP_OR_DOMAIN
+        # OpenSearch HTTP port
+        Port 30920
+        # Index name in OpenSearch
+        Index remote-cluster-logs
+        # Document type (deprecated but required)
+        Type _doc
+        # Include the Fluent Bit tag in the record
+        Include_Tag_Key true
+        # Field name for the tag
+        Tag_Key @svc_name
+        # Suppress type name in OpenSearch 7.x+
+        Suppress_Type_Name On
+        # Disable TLS/HTTPS (OpenSearch without TLS)
+        tls Off
+        # Retry settings for network issues
+        Retry_Limit 5
+        # Buffer settings for better reliability
+        storage.total_limit_size 100M

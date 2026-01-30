@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-load-test-script
+  namespace: default
+data:
+  load-test.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+    import { Rate } from 'k6/metrics';
+
+    // 커스텀 메트릭 정의
+    export let errorRate = new Rate('errors');
+
+    // 테스트 옵션 설정
+    export let options = {
+      stages: [
+        // 워밍업 단계: 1분 동안 1 -> 10 사용자로 증가
+        { duration: '1m', target: 10 },
+        // 점진적 부하 증가: 5분 동안 10 -> 50 사용자로 증가
+        { duration: '5m', target: 50 },
+        // 고부하 유지: 10분 동안 50 사용자 유지
+        { duration: '10m', target: 50 },
+        // 스파이크 테스트: 2분 동안 50 -> 100 사용자로 급증
+        { duration: '2m', target: 100 },
+        // 스파이크 유지: 3분 동안 100 사용자 유지
+        { duration: '3m', target: 100 },
+        // 점진적 부하 감소: 5분 동안 100 -> 10 사용자로 감소
+        { duration: '5m', target: 10 },
+        // 쿨다운: 2분 동안 10 -> 0 사용자로 감소
+        { duration: '2m', target: 0 },
+      ],
+      thresholds: {
+        // 95%의 요청이 1000ms 이내에 완료되어야 함
+        http_req_duration: ['p(95)<1000'],
+        // 에러율이 5% 미만이어야 함
+        errors: ['rate<0.05'],
+        // 초당 요청 처리량
+        http_reqs: ['rate>10'],
+      },
+    };
+
+    // 테스트 대상 URL (Service 이름으로 접근)
+    const BASE_URL = 'http://test-app-service.default.svc.cluster.local';
+
+    export default function () {
+      // 메인 페이지 요청
+      let response = http.get(`${BASE_URL}/`);
+      
+      // 응답 검증
+      let result = check(response, {
+        'status is 200': (r) => r.status === 200,
+        'response time < 1000ms': (r) => r.timings.duration < 1000,
+        'response contains nginx': (r) => r.body.includes('nginx'),
+      });
+
+      // 에러율 메트릭 업데이트
+      errorRate.add(!result);
+
+      // 추가 엔드포인트 테스트 (nginx 기본 설정)
+      response = http.get(`${BASE_URL}/favicon.ico`);
+      check(response, {
+        'favicon status is 200 or 404': (r) => r.status === 200 || r.status === 404,
+      });
+
+      // CPU 집약적인 작업을 시뮬레이션하기 위한 대용량 페이지 요청
+      // (실제로는 존재하지 않지만 nginx가 404를 처리하면서 CPU 사용)
+      for (let i = 0; i < 3; i++) {
+        http.get(`${BASE_URL}/heavy-page-${i}`);
+      }
+
+      // 사용자 간 요청 간격 (1-3초 랜덤)
+      sleep(Math.random() * 2 + 1);
+    }
+
+    export function handleSummary(data) {
+      return {
+        'load-test-summary.json': JSON.stringify(data),
+        stdout: `
+    === k6 부하 테스트 결과 요약 ===
+    총 요청 수: ${data.metrics.http_reqs.count}
+    평균 응답 시간: ${data.metrics.http_req_duration.avg.toFixed(2)}ms
+    95 퍼센타일 응답 시간: ${data.metrics['http_req_duration{percentile:95}'].value.toFixed(2)}ms
+    에러율: ${(data.metrics.errors.rate * 100).toFixed(2)}%
+    초당 평균 요청 수: ${data.metrics.http_reqs.rate.toFixed(2)}
+
+    === HPA 확인 명령어 ===
+    kubectl get hpa test-app-hpa -w
+    kubectl get pods -l app=test-app -w
+    kubectl top pods -l app=test-app
+    kubectl top nodes
+        `,
+      };
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-advanced-load-test
+  namespace: default
+spec:
+  template:
+    spec:
+      containers:
+      - name: k6
+        image: grafana/k6:latest
+        command: ["k6", "run", "/scripts/load-test.js"]
+        volumeMounts:
+        - name: k6-script-volume
+          mountPath: /scripts
+      volumes:
+      - name: k6-script-volume
+        configMap:
+          name: k6-load-test-script
+      restartPolicy: Never
+  backoffLimit: 1

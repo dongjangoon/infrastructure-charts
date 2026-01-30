@@ -1,0 +1,55 @@
+# values.yaml (예시)
+grafana:
+  enabled: true
+  service:
+    type: NodePort
+    nodePort: 32000
+  adminPassword: "${GRAFANA_ADMIN_PASSWORD}"
+
+  persistence:
+    enabled: true
+    storageClassName: hostpath
+    type: pvc
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+
+  initChownData:
+    enabled: true
+    securityContext:
+      runAsUser: 0
+      runAsNonRoot: false
+      capabilities:
+        add:
+          - CHOWN
+          - SETUID
+          - SETGID
+
+  additionalDataSources:
+    - name: Tempo
+      type: tempo
+      uid: tempo
+      isDefault: false
+      url: http://tempo.monitoring.svc.cluster.local:3200
+      access: proxy
+      jsonData:
+        defaultQueryType: traceID
+        nodeGraph:
+          enabled: true
+
+prometheus:
+  enabled: true
+  prometheusSpec:
+    replicas: 1
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: hostpath
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+prometheus-node-exporter:
+  hostRootFsMount:
+    enabled: false # 호스트 파일 시스템 마운트 비활성화

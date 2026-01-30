@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment  # 또는 StatefulSet
+metadata:
+  name: prometheus  # 실제 prometheus deployment 이름으로 변경
+  namespace: monitoring
+spec:
+  template:
+    spec:
+      containers:
+      - name: prometheus
+        volumeMounts:
+        - name: additional-rules-volume
+          mountPath: /etc/prometheus/additional-rules
+          readOnly: true
+      volumes:
+      - name: additional-rules-volume
+        configMap:
+          name: prometheus-additional-rules

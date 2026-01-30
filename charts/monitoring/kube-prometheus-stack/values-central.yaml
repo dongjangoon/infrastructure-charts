@@ -1,0 +1,34 @@
+# 중앙 Prometheus 설정 - 20250728
+
+# Grafana 멀티 클러스터 대시보드 enable
+grafana:
+  sidecar:
+    dashboards:
+      multicluster:
+        global:
+          enabled: true
+
+
+# Prometheus 설정 -> 중앙 클러스터를 cluster1으로 label 변경
+prometheus:
+  prometheusSpec:
+    scrapeClasses:
+      - default: true
+        name: cluster-relabeling
+        relabelings:
+          - sourceLabels: [ __name__ ]
+            regex: (.*)
+            targetLabel: cluster
+            replacement: cluster1
+            action: replace
+
+    # 외부에 노출되는 라벨 설정
+    externalLabels:
+      cluster: "cluster1"
+      prometheus_instance: "central-prometheus"
+
+    ## enable --web.enable-remote-write-receiver flag on prometheus-server
+    ## default: true
+    # remote write receiver 활성화 (Agent 모드에서 메트릭 수신용)
+    enableRemoteWriteReceiver: true
+

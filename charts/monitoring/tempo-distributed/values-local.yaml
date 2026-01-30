@@ -1,0 +1,191 @@
+# Tempo Distributed Values
+global:
+  image:
+    registry: docker.io
+
+# Traces configuration - 각 프로토콜 활성화
+traces:
+  otlp:
+    http:
+      enabled: true    # 4318 포트 활성화
+    grpc:
+      enabled: true    # 4317 포트 활성화
+  jaeger:
+    thriftCompact:
+      enabled: false   # UDP 6831 (필요시 true)
+    thriftBinary:
+      enabled: false   # UDP 6832 (필요시 true)  
+    thriftHttp:
+      enabled: false    # TCP 14268 활성화
+    grpc:
+      enabled: false   # TCP 14250 활성화
+  zipkin:
+    enabled: false     # TCP 9411 (필요시 true)
+  opencensus:
+    enabled: false     # TCP 55678 (필요시 true)
+
+# Tempo configuration
+tempo:
+  # Global Tempo configuration
+  config: |
+    multitenancy_enabled: false
+    usage_report:
+      reporting_enabled: false
+    compactor:
+      compaction:
+        block_retention: 1h
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+    ingester:
+      lifecycler:
+        ring:
+          kvstore:
+            store: memberlist
+    server:
+      http_listen_port: 3100
+      log_level: info
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+        wal:
+          path: /var/tempo/wal
+        pool:
+          max_workers: 100
+          queue_depth: 10000
+
+# Components configuration
+distributor:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+
+ingester:
+  replicas: 3
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 5Gi
+    accessModes:
+      - ReadWriteOnce
+
+querier:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+
+queryFrontend:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+  service:
+    type: NodePort
+    nodePort: 30120
+
+compactor:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 5Gi
+    accessModes:
+      - ReadWriteOnce
+
+# Service configuration
+service:
+  type: ClusterIP
+
+# ServiceMonitor for Prometheus scraping
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+
+# Gateway configuration (Nginx)
+gateway:
+  enabled: true
+  replicas: 1
+  service:
+    type: NodePort
+    nodePort: 30110
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+
+# Memcached for query results caching
+memcached:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+
+memcachedExporter:
+  enabled: false
+
+# MinIO for object storage (optional, using local storage instead)
+minio:
+  enabled: false
+
+# Metrics generator (optional)
+metricsGenerator:
+  enabled: false
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001

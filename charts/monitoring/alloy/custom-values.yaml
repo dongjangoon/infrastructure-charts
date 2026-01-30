@@ -1,0 +1,194 @@
+controller:
+  type: "deployment"
+  replicas: 2
+
+image:
+  repository: grafana/alloy
+  tag: "v1.10.0" # 또는 특정 버전 (예: "1.0.0")
+
+serviceAccount:
+  create: true
+  name: alloy-kafka-consumer
+
+rbac:
+  create: true
+  # Alloy가 Kafka만 소비하고 Loki로 푸시하는 경우, 추가적인 K8s API 권한은 필요 없습니다.
+  # 필요한 경우, Secret이나 ConfigMap 접근 권한을 여기에 추가할 수 있습니다.
+
+alloy:
+  configMap:
+    content: |-
+      // Kafka에서 로그 데이터 수신
+      loki.source.kafka "raw" {
+        brokers       = ["${KAFKA_BROKER_IP}:9092"]
+        topics        = ["kubernetes-logs"]
+        forward_to    = [loki.process.json_parser.receiver]
+        // relabel_rules = loki.relabel.kafka.rules
+        version       = "2.0.0"
+        labels        = {
+          service_name = "raw_kafka",
+          source = "fluent-bit",
+        }
+
+        // 배치 크기 제한으로 Rate Limit 방지
+        group_id = "alloy-consumer-group"
+        use_incoming_timestamp = false
+      }
+
+      // JSON 파싱 및 라벨 추출
+      loki.process "json_parser" {
+        forward_to = [loki.write.http.receiver]
+        
+        // Fluent Bit의 JSON 파싱 설정을 반영
+        stage.json {
+          expressions = {
+
+            log_content = "log",
+            timestamp = "time",
+            namespace = "kubernetes.namespace_name", 
+            pod = "kubernetes.pod_name",
+            container = "kubernetes.container_name",  
+            app = "kubernetes.labels.app",
+            stream = "stream",
+            host = "kubernetes.host",  
+            cluster = "cluster_name",  
+            environment = "environment",
+          }
+        }
+
+        // 멀티라인 로그 병합
+        stage.multiline {
+          firstline = "^(\\d{4}-\\d{2}-\\d{2}|\\[.*\\])"
+          max_wait_time = "3s"
+          max_lines     = 200
+        }
+
+        // 타임스탬프 파싱
+        stage.timestamp {
+          source = "timestamp"
+          format = "RFC3339Nano"
+        }
+
+        // 로그 레벨 추출
+        stage.regex {
+          expression = ".*\\b(ERROR|WARN|WARNING|INFO|DEBUG|TRACE)\\b.*"
+          source = "log_content"
+        }
+
+        // 추출된 값들을 라벨로 설정
+        stage.labels {
+          values = {
+            namespace    = "namespace",
+            pod          = "pod_name",
+            container    = "container", 
+            node         = "host",
+            application  = "app",
+            cluster      = "cluster",
+            env          = "environment",
+            stream       = "stream",
+            level        = "__tmp_0",  // regex에서 첫 번째 캡처 그룹
+          }
+        }
+
+        // 시스템 네임스페이스 필터링
+        stage.drop {
+          source = "namespace"
+          expression = "^(kube-system|monitoring)$"
+        }
+
+        // 로그 내용만 출력 (JSON 메타데이터 제거)
+        stage.output {
+          source = "log_content"
+        }
+      }
+
+      // Loki로 데이터 전송
+      loki.write "http" {
+        endpoint {
+          url = "http://10.233.43.251/loki/api/v1/push"
+
+          // Rate Limit 대응을 위한 재시도 설정
+          max_backoff_period  = "120s"
+          min_backoff_period  = "5s"
+          max_backoff_retries = 20
+
+          remote_timeout = "120s"
+
+          // 배치 설정
+          batch_size = "25KB"   // 100KB
+          batch_wait = "5s"     // 5초마다 전송
+        }
+
+        // Rate Limit 발생 시 로그 드롭 방지
+        wal {
+          enabled = true
+        }
+      }
+
+      // OTLP 수신기
+      otelcol.receiver.kafka "default" {
+        brokers           = ["${KAFKA_BROKER_IP}:9092"]
+        protocol_version  = "2.0.0"
+        topic             = "otlp"
+        encoding          = "otlp_proto"
+
+        output {
+          logs = [otelcol.processor.batch.default.input]
+        }
+      }
+
+      otelcol.processor.batch "default" {
+        send_batch_size = 1024
+        timeout = "5s"
+
+        output {
+          logs = [otelcol.exporter.otlphttp.default.input]
+        }
+      }
+
+      otelcol.exporter.otlphttp "default" {
+        client {
+          endpoint = "http://10.233.43.251/otlp"
+          timeout = "10s"
+        }
+      }
+
+      
+  
+
+resources: # Alloy Pod가 사용할 리소스 제한 (필요에 따라 조정)
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+  requests:
+    memory: "256Mi"
+    cpu: "250m"
+
+# DNS 문제 해결을 위한 dnsPolicy 설정
+dnsPolicy: ClusterFirst
+dnsConfig:
+  nameservers:
+    - 10.233.0.3    # core-dns Service IP
+  searches:
+    - monitoring.svc.cluster.local
+    - svc.cluster.local
+    - cluster.local
+  options:
+    - name: ndots
+      value: "2"
+    - name: edns0
+    - name: timeout
+      value: "5"
+
+tolerations: # 테인트된 노드에 배포가 필요한 경우
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  - operator: "Exists"
+    effect: "NoExecute"
+  - operator: "Exists"
+    effect: "NoSchedule"
+  - key: gpu
+    operator: Equal
+    value: "true"
+    effect: NoSchedule

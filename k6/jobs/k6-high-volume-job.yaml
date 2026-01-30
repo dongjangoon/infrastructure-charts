@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-high-volume-script
+  namespace: default
+data:
+  high-volume-test.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+    import { Rate } from 'k6/metrics';
+
+    export let errorRate = new Rate('errors');
+
+    // 고용량 부하 테스트 - 4코어 16GB 스펙 기준
+    export let options = {
+      stages: [
+        // 워밍업: 2분 동안 0 -> 50 사용자
+        { duration: '2m', target: 50 },
+        // 1단계: 3분 동안 50 -> 150 사용자 (CPU 50-70% 예상)
+        { duration: '3m', target: 150 },
+        // 2단계: 5분 동안 150 -> 300 사용자 (CPU 70-90% 예상, HPA 스케일아웃)
+        { duration: '5m', target: 300 },
+        // 3단계: 3분 동안 300 -> 500 사용자 (스트레스 테스트)
+        { duration: '3m', target: 500 },
+        // 고부하 유지: 10분 동안 500 사용자 유지
+        { duration: '10m', target: 500 },
+        // 스파이크: 2분 동안 500 -> 800 사용자 (극한 테스트)
+        { duration: '2m', target: 800 },
+        // 스파이크 유지: 3분 동안 800 사용자
+        { duration: '3m', target: 800 },
+        // 점진적 감소: 5분 동안 800 -> 100 사용자
+        { duration: '5m', target: 100 },
+        // 쿨다운: 3분 동안 100 -> 0 사용자
+        { duration: '3m', target: 0 },
+      ],
+      thresholds: {
+        http_req_duration: ['p(95)<3000'], // 응답시간 임계값 완화
+        errors: ['rate<0.1'], // 에러율 10% 이하
+        http_reqs: ['rate>50'], // 초당 50 요청 이상
+      },
+    };
+
+    const BASE_URL = 'http://test-app-service.default.svc.cluster.local';
+
+    export default function () {
+      // 메인 페이지 요청
+      let response = http.get(`${BASE_URL}/`);
+      
+      let result = check(response, {
+        'status is 200': (r) => r.status === 200,
+        'response time < 3000ms': (r) => r.timings.duration < 3000,
+      });
+
+      errorRate.add(!result);
+
+      // CPU 부하 증가를 위한 추가 요청들
+      const endpoints = ['/', '/favicon.ico', '/robots.txt'];
+      for (let i = 0; i < 2; i++) {
+        let endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
+        http.get(`${BASE_URL}${endpoint}`);
+      }
+
+      // 짧은 대기 시간으로 더 높은 RPS 생성
+      sleep(Math.random() * 1 + 0.5); // 0.5-1.5초
+    }
+
+    export function handleSummary(data) {
+      return {
+        'high-volume-test-summary.json': JSON.stringify(data),
+        stdout: `
+    === k6 고용량 부하 테스트 결과 ===
+    최대 동시 사용자: 800명
+    총 요청 수: ${data.metrics.http_reqs.count}
+    평균 응답 시간: ${data.metrics.http_req_duration.avg.toFixed(2)}ms
+    95 퍼센타일: ${data.metrics['http_req_duration{percentile:95}'].value.toFixed(2)}ms
+    에러율: ${(data.metrics.errors.rate * 100).toFixed(2)}%
+    초당 평균 요청: ${data.metrics.http_reqs.rate.toFixed(2)}
+        `,
+      };
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-high-volume-test
+  namespace: default
+spec:
+  template:
+    spec:
+      containers:
+      - name: k6
+        image: grafana/k6:latest
+        command: ["k6", "run", "/scripts/high-volume-test.js"]
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        volumeMounts:
+        - name: k6-script-volume
+          mountPath: /scripts
+      volumes:
+      - name: k6-script-volume
+        configMap:
+          name: k6-high-volume-script
+      restartPolicy: Never
+  backoffLimit: 1

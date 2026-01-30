@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: logging
+
+resources:
+  - ../../base
+
+patchesStrategicMerge:
+  - patches/multicluster-config.yaml
+
+# 클러스터별 설정을 위한 변수 치환
+replicas:
+  - name: fluent-bit-config
+    count: 1
+
+configMapGenerator:
+  - name: fluent-bit-multicluster-config
+    literals:
+      - cluster_name=dev-cluster
+      - opensearch_host=opensearch-cluster-master.monitoring.svc.cluster.local

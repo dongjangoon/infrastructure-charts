@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  labels:
+    app: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus-server:9090
+      uid: prometheus
+      isDefault: true
+      editable: false
+
+    - name: Jaeger
+      type: jaeger
+      access: proxy
+      url: http://jaeger-ui:16686/jaeger
+      uid: jaeger
+      isDefault: false
+      editable: true
+      jsonData:
+        tracesToLogsV2:
+          datasourceUid: 'prometheus'
+        tracesToMetrics:
+          datasourceUid: 'prometheus'
+        nodeGraph:
+          enabled: true
+
+    - name: OpenSearch
+      type: elasticsearch
+      access: proxy
+      url: http://opensearch-cluster-master.logging.svc.cluster.local:9200
+      uid: opensearch
+      isDefault: false
+      editable: true
+      jsonData:
+        database: "*"
+        esVersion: "7.16.0"
+        interval: Daily
+        logLevelField: level
+        logMessageField: message
+        maxConcurrentShardRequests: 5
+        timeField: "@timestamp"
+        includeFrozen: false
+        sigV4Auth: false
+        xpack: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-ini
+  labels:
+    app: grafana
+data:
+  grafana.ini: |
+    [tracing.jaeger]
+    address = jaeger-agent:6831
+    always_included_tag = app:grafana
+    sampler_type = const
+    sampler_param = 1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  labels:
+    app: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+    - name: 'default'
+      orgId: 1
+      folder: ''
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards
+
+    - name: 'cluster-monitoring'
+      orgId: 1
+      folder: 'Cluster'
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards/cluster
+
+    - name: 'node-monitoring'
+      orgId: 1
+      folder: 'Node'
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards/node
+
+    - name: 'workload-monitoring'
+      orgId: 1
+      folder: 'Workload'
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards/workload
+
+    - name: 'tracing-monitoring'
+      orgId: 1
+      folder: 'Tracing'
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards/tracing
+
+    - name: 'logging'
+      orgId: 1
+      folder: 'Logging'
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards/logging

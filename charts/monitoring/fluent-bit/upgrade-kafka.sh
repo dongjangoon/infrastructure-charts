@@ -1,0 +1,1 @@
+helm upgrade --install fluent-bit . -f custom-values.yaml --namespace monitoring

@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base 참조 (실제 base 경로로 수정하세요)
+resources:
+  - ../../base  # 또는 실제 base prometheus 경로
+
+# ConfigMap 생성
+configMapGenerator:
+- name: prometheus-additional-rules
+  namespace: monitoring
+  files:
+  - rules.yml=../prometheus-rules-standard/rules-clean.yml
+  options:
+    labels:
+      app: prometheus
+      component: rules
+
+# 기존 Prometheus ConfigMap에 추가 설정
+patchesStrategicMerge:
+  - prometheus-config-patch.yaml
+
+# 이름 접미사 비활성화 (선택사항)
+generatorOptions:
+  disableNameSuffixHash: true
+
+namespace: monitoring

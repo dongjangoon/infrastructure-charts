@@ -1,0 +1,56 @@
+objstoreConfig: |
+  type: S3
+  config:
+    bucket: "${S3_BUCKET}"
+    endpoint: "s3.amazonaws.com"
+    region: "${AWS_REGION}"
+    access_key: "${AWS_ACCESS_KEY_ID}"
+    secret_key: "${AWS_SECRET_ACCESS_KEY}"
+    insecure: false
+
+query:
+  enabled: true
+  replicaCount: 2
+  stores:
+    - "prometheus-operated.monitoring.svc.cluster.local:10901"  # cluster1
+    - "${CLUSTER2_IP}:30901"  # cluster2
+    - "thanos-storegateway:10901"
+  # service:
+  #   type: NodePort  # 또는 ClusterIP + Ingress
+  #   nodePorts:
+  #     http: 30091
+
+
+storegateway:
+  enabled: true
+  replicaCount: 2
+  persistence:
+    enabled: true
+    size: 10Gi
+
+compactor:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 20Gi
+
+ruler:
+  enabled: false
+
+queryFrontend:
+  enabled: true  # 쿼리 캐싱 및 성능 향상
+
+receive:
+  enabled: false  # Remote Write용, 필요시 활성화
+
+bucketweb:
+  enabled: true  # 버킷 데이터 웹 UI
+
+receiveDistributor:
+  enabled: false
+
+# 메트릭 수집용
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true

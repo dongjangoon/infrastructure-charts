@@ -1,0 +1,43 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: test-app-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: test-app
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 60
+  behavior:
+    # 스케일링 동작을 세밀하게 제어하는 설정
+    scaleUp:
+      # 스케일 업 안정화 시간: 60초 동안 메트릭이 안정된 후 스케일링 결정
+      stabilizationWindowSeconds: 60
+      policies:
+      # 60초마다 현재 파드 개수의 최대 50%까지 증가 허용 (급격한 증가 방지)
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      # 스케일 다운 안정화 시간: 300초(5분) 동안 메트릭이 안정된 후 스케일링 결정
+      stabilizationWindowSeconds: 300
+      policies:
+      # 60초마다 현재 파드 개수의 최대 25%까지 감소 허용 (급격한 감소 방지)
+      - type: Percent
+        value: 25
+        periodSeconds: 60

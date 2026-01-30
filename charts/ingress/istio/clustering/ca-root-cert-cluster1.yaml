@@ -1,0 +1,10 @@
+apiVersion: v1
+data:
+  root-cert.pem: |
+    # Replace with your Istio CA root certificate (PEM format)
+kind: ConfigMap
+metadata:
+  labels:
+    istio.io/config: "true"
+  name: istio-ca-root-cert
+  namespace: istio-system

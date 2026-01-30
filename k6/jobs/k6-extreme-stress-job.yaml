@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-extreme-stress-script
+  namespace: default
+data:
+  extreme-stress-test.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+    import { Rate } from 'k6/metrics';
+
+    export let errorRate = new Rate('errors');
+
+    // 극한 스트레스 테스트 - 노드 스케일링 + 시스템 한계 테스트
+    export let options = {
+      stages: [
+        // 급속 증가: 2분 동안 0 -> 200 사용자
+        { duration: '2m', target: 200 },
+        // 1차 스트레스: 3분 동안 200 -> 500 사용자
+        { duration: '3m', target: 500 },
+        // 2차 스트레스: 5분 동안 500 -> 1000 사용자 (노드 스케일링 강제)
+        { duration: '5m', target: 1000 },
+        // 극한 부하: 3분 동안 1000 -> 1500 사용자
+        { duration: '3m', target: 1500 },
+        // 최대 부하 유지: 8분 동안 1500 사용자 지속
+        { duration: '8m', target: 1500 },
+        // 메가 스파이크: 1분 동안 1500 -> 2000 사용자 (시스템 한계 테스트)
+        { duration: '1m', target: 2000 },
+        // 스파이크 유지: 2분 동안 2000 사용자
+        { duration: '2m', target: 2000 },
+        // 급속 감소: 3분 동안 2000 -> 500 사용자
+        { duration: '3m', target: 500 },
+        // 정상화: 5분 동안 500 -> 0 사용자
+        { duration: '5m', target: 0 },
+      ],
+      thresholds: {
+        http_req_duration: ['p(95)<10000'], // 응답시간 10초 이하
+        errors: ['rate<0.3'], // 에러율 30% 이하 (극한 상황 고려)
+        http_reqs: ['rate>100'], // 초당 100 요청 이상
+      },
+    };
+
+    const BASE_URL = 'http://test-app-service.default.svc.cluster.local';
+
+    export default function () {
+      // 동시에 여러 요청 생성하여 부하 극대화
+      let responses = [];
+      
+      // 병렬 요청으로 CPU/메모리 사용량 급증
+      for (let i = 0; i < 3; i++) {
+        responses.push(http.get(`${BASE_URL}/`));
+      }
+
+      // 응답 검증
+      responses.forEach((response, index) => {
+        let result = check(response, {
+          [`request_${index}_status_200`]: (r) => r.status === 200,
+          [`request_${index}_response_time`]: (r) => r.timings.duration < 10000,
+        });
+        errorRate.add(!result);
+      });
+
+      // 추가 부하를 위한 더미 요청들
+      const heavyEndpoints = [
+        '/',
+        '/heavy-computation',
+        '/large-data',
+        '/api/users',
+        '/api/products'
+      ];
+
+      // 랜덤하게 무거운 엔드포인트 호출
+      for (let i = 0; i < 5; i++) {
+        let endpoint = heavyEndpoints[Math.floor(Math.random() * heavyEndpoints.length)];
+        http.get(`${BASE_URL}${endpoint}`);
+      }
+
+      // 매우 짧은 대기 시간으로 극한 RPS 달성
+      sleep(Math.random() * 0.5 + 0.1); // 0.1-0.6초
+    }
+
+    export function handleSummary(data) {
+      return {
+        'extreme-stress-test-summary.json': JSON.stringify(data),
+        stdout: `
+    === k6 극한 스트레스 테스트 결과 ===
+    ⚠️  최대 동시 사용자: 2000명 (극한 테스트)
+    📊 총 요청 수: ${data.metrics.http_reqs.count}
+    ⏱️  평균 응답 시간: ${data.metrics.http_req_duration.avg.toFixed(2)}ms
+    📈 95 퍼센타일: ${data.metrics['http_req_duration{percentile:95}'].value.toFixed(2)}ms
+    ❌ 에러율: ${(data.metrics.errors.rate * 100).toFixed(2)}%
+    🚀 초당 평균 요청: ${data.metrics.http_reqs.rate.toFixed(2)}
+
+    === 모니터링 명령어 ===
+    kubectl get hpa test-app-hpa -w
+    kubectl get pods -l app=test-app -w
+    kubectl top nodes
+    kubectl top pods -l app=test-app
+    kubectl get events --sort-by=.metadata.creationTimestamp
+        `,
+      };
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-extreme-stress-test
+  namespace: default
+spec:
+  template:
+    spec:
+      containers:
+      - name: k6
+        image: grafana/k6:latest
+        command: ["k6", "run", "/scripts/extreme-stress-test.js"]
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+        volumeMounts:
+        - name: k6-script-volume
+          mountPath: /scripts
+      volumes:
+      - name: k6-script-volume
+        configMap:
+          name: k6-extreme-stress-script
+      restartPolicy: Never
+  backoffLimit: 1

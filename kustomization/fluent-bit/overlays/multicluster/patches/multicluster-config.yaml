@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Daemon off
+        Flush 5
+        Log_Level warn
+        Parsers_File parsers.conf
+        storage.path /var/fluent-bit/state/flb-storage/
+        storage.sync normal
+        storage.checksum off
+        storage.backlog.mem_limit 5M
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+        Health_Check On
+
+    @INCLUDE userapp-log.conf
+
+    # 클러스터명 추가
+    [FILTER]
+        Name modify
+        Match kube.*
+        Add cluster_name CLUSTER_NAME_PLACEHOLDER
+
+    # 파일 경로에서 파드명과 네임스페이스 추출
+    [FILTER]
+        Name parser
+        Match kube.*
+        Key_Name filepath
+        Parser container_path_parser
+        Reserve_Data On
+
+    # 불필요한 필드 제거 및 정리
+    [FILTER]
+        Name modify
+        Match kube.*
+        Remove filepath
+        Remove container_id
+        Remove logtag
+        Remove log_source
+
+    # 환경 정보 추출 및 로그 레벨 감지
+    [FILTER]
+        Name lua
+        Match kube.*
+        Script /fluent-bit/scripts/environment_detector.lua
+        Call extract_environment
+
+    # Java 멀티라인 로그 처리
+    [FILTER]
+        Name multiline
+        Match kube.*
+        Multiline.Key_Content log_message
+        Multiline.Parser java
+
+    # 애플리케이션 로그 출력 (로컬 OpenSearch, 일별 인덱스)
+    [OUTPUT]
+        Name opensearch
+        Match_Regex ^(?!kube\.(kube-system|logging|monitoring|ingress-nginx)$).*
+        Host YOUR_LOCAL_IP
+        Port 9200
+        Index CLUSTER_NAME_PLACEHOLDER-%Y.%m.%d
+        Include_Tag_Key true
+        Tag_Key @svc_name
+        Suppress_Type_Name On
+        tls off
+        Logstash_Format On
+        Logstash_Prefix CLUSTER_NAME_PLACEHOLDER
+        Logstash_DateFormat %Y.%m.%d
+
+    # 인프라 로그 출력 (로컬 OpenSearch, 일별 인덱스)
+    [OUTPUT]
+        Name opensearch
+        Match_Regex kube\.(kube-system|logging|monitoring|ingress-nginx)
+        Host YOUR_LOCAL_IP
+        Port 9200
+        Index CLUSTER_NAME_PLACEHOLDER-infra-%Y.%m.%d
+        Include_Tag_Key true
+        Tag_Key @svc_name
+        Suppress_Type_Name On
+        tls off
+        Logstash_Format On
+        Logstash_Prefix CLUSTER_NAME_PLACEHOLDER-infra
+        Logstash_DateFormat %Y.%m.%d
+
+  userapp-log.conf: |
+    # 파일명에서 네임스페이스 추출하여 태그에 포함
+    [INPUT]
+        Name tail
+        Path /var/log/containers/*.log
+        Parser cri
+        DB /var/fluent-bit/state/flb_log.db
+        Tag_Regex ^/var/log/containers/(?<pod>[^_]+)_(?<namespace>[^_]+)_(?<container>[^-]+)-(?<container_id>.+)\.log$
+        Tag kube.<namespace>
+        Path_Key filepath
+        Mem_Buf_Limit 5MB
+        Skip_Long_Lines On
+
+  parsers.conf: |
+    [PARSER]
+        Name cri
+        Format regex
+        Regex ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name container_path_parser
+        Format regex
+        Regex ^/var/log/containers/(?<pod_name>[^_]+)_(?<namespace>[^_]+)_(?<container_name>[^-]+)-(?<container_id>.+)\.log$
+
+    [MULTILINE_PARSER]
+        name java
+        type regex
+        flush_timeout 1000
+        rule "start_state" "/(\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}[\.,]\d{3})/" "cont"
+        rule "cont" "/^(?!\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2})/" "cont"
