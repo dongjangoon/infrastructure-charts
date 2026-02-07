@@ -1,0 +1,43 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: llm-tracing
+servers: 1
+agents: 1
+image: rancher/k3s:v1.31.4-k3s1
+ports:
+  # Istio Gateway HTTP (UI 접속)
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer
+  # Istio Gateway HTTPS
+  - port: 8443:443
+    nodeFilters:
+      - loadbalancer
+  # OTel Collector gRPC via Istio Gateway
+  - port: 4317:4317
+    nodeFilters:
+      - loadbalancer
+  # OTel Collector HTTP via Istio Gateway
+  - port: 4318:4318
+    nodeFilters:
+      - loadbalancer
+options:
+  k3d:
+    wait: true
+    timeout: "180s"
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true
+  # NOTE: gpuRequest: all causes network issues with the loadbalancer container.
+  # Use NVIDIA device plugin inside Kubernetes instead with docker run --gpus.
+registries:
+  create:
+    name: registry.localhost
+    host: "0.0.0.0"
+    hostPort: "5111"

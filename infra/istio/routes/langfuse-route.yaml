@@ -1,0 +1,16 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: langfuse-route
+  namespace: langfuse
+spec:
+  parentRefs:
+    - name: main-gateway
+      namespace: istio-system
+      sectionName: http
+  hostnames:
+    - "langfuse.local"
+  rules:
+    - backendRefs:
+        - name: langfuse-web
+          port: 3000

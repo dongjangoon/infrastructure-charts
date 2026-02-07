@@ -1,0 +1,31 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: main-gateway
+  namespace: istio-system
+spec:
+  gatewayClassName: istio
+  listeners:
+    # ── HTTP (Grafana, Prometheus, Tempo UI) ──
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+
+    # ── OTel OTLP gRPC (HTTP/2 cleartext) ──
+    - name: otlp-grpc
+      protocol: HTTP
+      port: 4317
+      allowedRoutes:
+        namespaces:
+          from: All
+
+    # ── OTel OTLP HTTP ──
+    - name: otlp-http
+      protocol: HTTP
+      port: 4318
+      allowedRoutes:
+        namespaces:
+          from: All

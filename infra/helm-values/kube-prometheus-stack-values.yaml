@@ -1,0 +1,136 @@
+# =============================================================================
+# Grafana
+# =============================================================================
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: admin
+
+  service:
+    type: ClusterIP
+
+  additionalDataSources:
+    - name: Tempo
+      type: tempo
+      uid: tempo
+      url: http://tempo.tracing.svc.cluster.local:3200
+      access: proxy
+      isDefault: false
+      jsonData:
+        tracesToMetricsV2:
+          datasourceUid: prometheus
+        serviceMap:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true
+
+  grafana.ini:
+    feature_toggles:
+      enable: traceToMetrics tempoSearch tempoBackendSearch tempoServiceGraph
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      searchNamespace: ALL
+
+# =============================================================================
+# Prometheus
+# =============================================================================
+prometheus:
+  enabled: true
+
+  service:
+    type: ClusterIP
+
+  prometheusSpec:
+    retention: 7d
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorNamespaceSelector: {}
+    storageSpec: {}
+
+    additionalScrapeConfigs:
+      - job_name: 'otel-collector'
+        scrape_interval: 15s
+        static_configs:
+          - targets: ['otel-collector-opentelemetry-collector.tracing.svc.cluster.local:8889']
+
+    enableRemoteWriteReceiver: true
+
+# =============================================================================
+# Alertmanager
+# =============================================================================
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+# =============================================================================
+# Node Exporter — hostNetwork이므로 sidecar 제외
+# =============================================================================
+prometheus-node-exporter:
+  podAnnotations:
+    sidecar.istio.io/inject: "false"
+  hostRootFsMount:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
+
+# =============================================================================
+# kube-state-metrics
+# =============================================================================
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# =============================================================================
+# Prometheus Operator
+# =============================================================================
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  admissionWebhooks:
+    patch:
+      podAnnotations:
+        sidecar.istio.io/inject: "false"

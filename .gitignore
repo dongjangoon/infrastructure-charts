@@ -1,34 +1,24 @@
-# Secrets and credentials
-*.pem
-*.key
-*.p12
-*.pfx
-.env
-.env.*
-*-secret.yaml
-!*-secret.yaml.example
+# Secrets (plain text)
+*-secret-plain.yaml
+*.env
+.env*
+!.env.example
 
-# Certificate files
-*.crt
-!charts/registry/harbor/ca.crt
+# Helm charts (use helm pull)
+infra/charts/
 
-# Values files with environment-specific secrets
-# Uncomment below if you use separate secret values files
-# values-secret*.yaml
-# *-secrets.yaml
+# Temporary files
+/tmp/
+*.tmp
 
 # IDE
 .idea/
 .vscode/
 *.swp
-*.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Temporary files
-*.tmp
-*.bak
-*.backup
+# Kubeseal cert (optional - can be committed but not required)
+# *.pem

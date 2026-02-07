@@ -1,0 +1,98 @@
+mode: deployment
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: ""
+
+service:
+  type: ClusterIP
+
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+    protocol: TCP
+    appProtocol: grpc
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+    protocol: TCP
+  prometheus:
+    enabled: true
+    containerPort: 8889
+    servicePort: 8889
+    protocol: TCP
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+          cors:
+            allowed_origins:
+              - "*"
+
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_mib: 512
+      spike_limit_mib: 128
+    batch:
+      send_batch_size: 1024
+      send_batch_max_size: 2048
+      timeout: 5s
+    resource:
+      attributes:
+        - key: deployment.environment
+          value: development
+          action: upsert
+        - key: service.namespace
+          value: llm-tracing
+          action: upsert
+
+  exporters:
+    otlp/tempo:
+      endpoint: tempo.tracing.svc.cluster.local:4317
+      tls:
+        insecure: true
+    prometheus:
+      endpoint: "0.0.0.0:8889"
+      namespace: otel_collector
+    debug:
+      verbosity: basic
+      sampling_initial: 5
+      sampling_thereafter: 200
+
+  extensions:
+    health_check:
+      endpoint: "0.0.0.0:13133"
+    zpages:
+      endpoint: "0.0.0.0:55679"
+
+  service:
+    extensions:
+      - health_check
+      - zpages
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, resource, batch]
+        exporters: [otlp/tempo, debug]
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [prometheus]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
